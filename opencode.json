@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "Cherry-Abyss-Router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cherry-Abyss-Router",
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY_ABYSS_ROUTER}",
+        "baseURL": "https://llm.naura.com/router/api/open-ai/v1"
+      },
+      "models": {
+        "qwen/qwen3.5-397b-a17b": {
+          "name": "Qwen3.5 397B A17B",
+          "reasoning": true
+        }
+      }
+    }
+  }
+}

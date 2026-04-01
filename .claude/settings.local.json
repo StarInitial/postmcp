@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(html|css|js|jsx|vue|svelte|ts|tsx\\)$\")",
+      "Bash(npm run:*)",
+      "Bash(wails build:*)",
+      "Bash(grep -E \"\\\\.\\(js|d\\\\.ts\\)$\")"
+    ]
+  }
+}
