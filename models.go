@@ -381,6 +381,6 @@ func defaultSettingsStore() SettingsStore {
 		HTTPCodeLanguage: "curl",
 		MCPCodeLanguage:  "json",
 		HistoryLimit:     500,
-		SnippetCollapsed: false,
+		SnippetCollapsed: true,
 	}
 }

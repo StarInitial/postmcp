@@ -192,7 +192,7 @@ export function createDefaultBootstrap() {
       httpCodeLanguage: 'curl',
       mcpCodeLanguage: 'json',
       historyLimit: 500,
-      snippetCollapsed: false,
+      snippetCollapsed: true,
     },
     loadedAt: new Date().toISOString(),
   }
