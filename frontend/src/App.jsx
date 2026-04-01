@@ -32,6 +32,9 @@ import {
   Toaster,
   ToastTitle,
   useToastController,
+  Popover,
+  PopoverSurface,
+  PopoverTrigger,
 } from '@fluentui/react-components'
 import Editor from '@monaco-editor/react'
 import {
@@ -51,7 +54,10 @@ import {
   PlugConnectedRegular,
   SearchRegular,
   SaveRegular,
+  SettingsRegular,
   StickerRegular,
+  DismissRegular,
+  CheckRegular,
 } from '@fluentui/react-icons'
 import './App.css'
 import { hasBackend, invokeBackend } from './lib/backend'
@@ -147,6 +153,31 @@ function App() {
   const [historyContextMenu, setHistoryContextMenu] = useState(null)
   const [historyDeleteDialog, setHistoryDeleteDialog] = useState(null)
   const [toolFilterByTab, setToolFilterByTab] = useState({})
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState('general')
+  const [settingsForm, setSettingsForm] = useState({
+    httpVersion: 'HTTP/1.1',
+    requestTimeout: 0,
+    maxResponseSize: 50,
+    noCacheHeader: false,
+    retainHeadersOnLinkClick: false,
+    followRedirects: true,
+    sendUsageData: false,
+    twoPaneView: false,
+    showIconsWithTabs: true,
+    sslVerification: false,
+    languageDetection: 'Auto',
+    alwaysOpenInNewTab: false,
+    askOnCloseUnsaved: false,
+    editorFontFamily: "IBMPlexMono, 'Courier New', monospace",
+    editorFontSize: 12,
+    editorIndentCount: 4,
+    editorIndentType: 'space',
+    themeColor: '#0f6cbd',
+    themeMode: 'system',
+    themeColors: ['#0f6cbd', '#d13438', '#0078d4', '#107c10', '#ff8c00', '#8764b8'],
+  })
+  const [themeColorContextMenu, setThemeColorContextMenu] = useState(null)
   const [editorSplitByMode, setEditorSplitByMode] = useState({
     [modes.http]: 0.56,
     [modes.mcp]: 0.56,
@@ -1989,9 +2020,213 @@ function App() {
       <div className="status-bar">
         <span>{loadError || statusMessage || '就绪'}</span>
         {busy && <Spinner size="tiny" />}
+        <Button appearance="subtle" size="small" icon={<SettingsRegular />} onClick={() => setSettingsDialogOpen(true)} title="设置" />
       </div>
 
       <Toaster toasterId={toasterId} position="top-end" />
+
+      <Dialog open={settingsDialogOpen} onOpenChange={(_, data) => setSettingsDialogOpen(data.open)}>
+        <DialogSurface className="settings-dialog-surface">
+          <DialogBody>
+            <div className="settings-dialog-header">
+              <DialogTitle>设置</DialogTitle>
+              <Button appearance="subtle" size="small" icon={<DismissRegular />} onClick={() => setSettingsDialogOpen(false)} className="settings-dialog-close" />
+            </div>
+            <DialogContent>
+              <TabList selectedValue={settingsTab} onTabSelect={(_, data) => setSettingsTab(data.value)}>
+                <Tab value="general">全局设置</Tab>
+                <Tab value="theme">主题风格</Tab>
+              </TabList>
+              <div className="settings-tab-content">
+                {settingsTab === 'general' && (
+                  <div className="settings-panel">
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🧩 请求设置</h3>
+                      <div className="settings-grid">
+                        <Field label="HTTP 版本">
+                          <Dropdown selectedOptions={[settingsForm.httpVersion]} value={settingsForm.httpVersion} onOptionSelect={(_, data) => setSettingsForm((f) => ({ ...f, httpVersion: data.optionValue }))}>
+                            <Option value="HTTP/1.1">HTTP/1.1</Option>
+                            <Option value="HTTP/2">HTTP/2</Option>
+                          </Dropdown>
+                        </Field>
+                        <Field label="请求超时时间（毫秒）">
+                          <Input type="number" value={String(settingsForm.requestTimeout)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, requestTimeout: Number(data.value || 0) }))} />
+                        </Field>
+                        <Field label="最大响应大小（MB）">
+                          <Input type="number" value={String(settingsForm.maxResponseSize)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, maxResponseSize: Number(data.value || 0) }))} />
+                        </Field>
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">📬 头信息设置</h3>
+                      <div className="settings-switches">
+                        <Switch checked={settingsForm.noCacheHeader} label="发送 no-cache 头" onChange={(_, data) => setSettingsForm((f) => ({ ...f, noCacheHeader: data.checked }))} />
+                        <Switch checked={settingsForm.retainHeadersOnLinkClick} label="点击链接时保留头信息" onChange={(_, data) => setSettingsForm((f) => ({ ...f, retainHeadersOnLinkClick: data.checked }))} />
+                        <Switch checked={settingsForm.followRedirects} label="自动跟随重定向" onChange={(_, data) => setSettingsForm((f) => ({ ...f, followRedirects: data.checked }))} />
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🖥️ 用户界面</h3>
+                      <div className="settings-switches">
+                        <Switch checked={settingsForm.showIconsWithTabs} label="标签页名称旁显示图标" onChange={(_, data) => setSettingsForm((f) => ({ ...f, showIconsWithTabs: data.checked }))} />
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🔐 SSL 证书验证</h3>
+                      <div className="settings-switches">
+                        <Switch checked={settingsForm.sslVerification} label="SSL 证书验证" onChange={(_, data) => setSettingsForm((f) => ({ ...f, sslVerification: data.checked }))} />
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🌍 语言检测</h3>
+                      <div className="settings-grid">
+                        <Field label="语言检测">
+                          <Dropdown selectedOptions={[settingsForm.languageDetection]} value={settingsForm.languageDetection} onOptionSelect={(_, data) => setSettingsForm((f) => ({ ...f, languageDetection: data.optionValue }))}>
+                            <Option value="Auto">自动</Option>
+                            <Option value="zh-CN">简体中文</Option>
+                            <Option value="en-US">英语</Option>
+                          </Dropdown>
+                        </Field>
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🗂️ 标签页与文件行为</h3>
+                      <div className="settings-switches">
+                        <Switch checked={settingsForm.alwaysOpenInNewTab} label="始终在新标签页打开请求" onChange={(_, data) => setSettingsForm((f) => ({ ...f, alwaysOpenInNewTab: data.checked }))} />
+                        <Switch checked={settingsForm.askOnCloseUnsaved} label="关闭未保存标签页时总是询问" onChange={(_, data) => setSettingsForm((f) => ({ ...f, askOnCloseUnsaved: data.checked }))} />
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">✍️ 编辑器设置</h3>
+                      <div className="settings-grid">
+                        <Field label="字体家族">
+                          <Input value={settingsForm.editorFontFamily} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorFontFamily: data.value }))} />
+                        </Field>
+                        <Field label="字体大小（px）">
+                          <Input type="number" value={String(settingsForm.editorFontSize)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorFontSize: Number(data.value || 12) }))} />
+                        </Field>
+                        <Field label="缩进空格数">
+                          <Input type="number" value={String(settingsForm.editorIndentCount)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorIndentCount: Number(data.value || 4) }))} />
+                        </Field>
+                        <Field label="缩进类型">
+                          <RadioGroup value={settingsForm.editorIndentType} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorIndentType: data.value }))}>
+                            <Radio value="space" label="空格" />
+                            <Radio value="tab" label="制表符" />
+                          </RadioGroup>
+                        </Field>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {settingsTab === 'theme' && (
+                  <div className="settings-panel">
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🎨 主题色</h3>
+                      <div className="theme-color-list">
+                        {settingsForm.themeColors.map((color) => (
+                          <div
+                            key={color}
+                            className={`theme-color-swatch ${settingsForm.themeColor === color ? 'active' : ''}`}
+                            style={{ backgroundColor: color }}
+                            onClick={() => setSettingsForm((f) => ({ ...f, themeColor: color }))}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setThemeColorContextMenu({ 
+                                color, 
+                                x: e.clientX - 110, 
+                                y: e.clientY - 80,
+                              })
+                            }}
+                          >
+                            {settingsForm.themeColor === color && <CheckRegular className="theme-color-check-icon" />}
+                          </div>
+                        ))}
+                        <label className="theme-color-add" title="添加主题色">
+                          <AddRegular />
+                          <input
+                            type="color"
+                            value={settingsForm.themeColor}
+                            onChange={(e) => {
+                              const newColor = e.target.value
+                              setSettingsForm((f) => ({ ...f, themeColor: newColor }))
+                              if (!settingsForm.themeColors.includes(newColor)) {
+                                setSettingsForm((f) => ({ ...f, themeColors: [...f.themeColors, newColor] }))
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {themeColorContextMenu && (
+                        <>
+                          <div
+                            className="context-menu-backdrop"
+                            onClick={() => setThemeColorContextMenu(null)}
+                          />
+                          <div
+                            className="theme-color-context-menu"
+                            style={{ 
+                              left: themeColorContextMenu.x, 
+                              top: themeColorContextMenu.y,
+                              position: 'fixed',
+                              zIndex: 100000,
+                            }}
+                          >
+                            <button
+                              className="context-menu-item"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSettingsForm((f) => ({ ...f, themeColor: themeColorContextMenu.color }))
+                                setThemeColorContextMenu(null)
+                              }}
+                            >
+                              <CheckRegular className="context-menu-icon" />
+                              <span>激活主题色</span>
+                            </button>
+                            <button
+                              className="context-menu-item danger"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSettingsForm((f) => ({
+                                  ...f,
+                                  themeColors: f.themeColors.filter((c) => c !== themeColorContextMenu.color),
+                                  themeColor: f.themeColor === themeColorContextMenu.color ? f.themeColors[0] : f.themeColor,
+                                }))
+                                setThemeColorContextMenu(null)
+                              }}
+                            >
+                              <DeleteRegular className="context-menu-icon danger" />
+                              <span>删除主题色</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">🌓 主题模式</h3>
+                      <div className="settings-switches">
+                        <RadioGroup value={settingsForm.themeMode} onChange={(_, data) => setSettingsForm((f) => ({ ...f, themeMode: data.value }))}>
+                          <Radio value="system" label="跟随系统" />
+                          <Radio value="light" label="亮色" />
+                          <Radio value="dark" label="暗色" />
+                        </RadioGroup>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </DialogContent>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <Dialog open={serverDialogOpen} onOpenChange={(_, data) => setServerDialogOpen(data.open)}>
         <DialogSurface className="dialog-surface">
