@@ -10,6 +10,22 @@
   --text-main: #0f172a;
   --text-subtle: #516072;
   --surface-alt: #f8fafc;
+  --brand-border: rgba(15, 108, 189, 0.35);
+  --brand-hover: #0d5ea5;
+  --brand-pressed: #0a4d87;
+  --brand-subtle: rgba(15, 108, 189, 0.1);
+  --brand-contrast: #ffffff;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #0f172a;
+  --panel-bg: rgba(15, 23, 42, 0.82);
+  --panel-border: rgba(148, 163, 184, 0.25);
+  --panel-shadow: 0 18px 40px rgba(2, 6, 23, 0.55);
+  --text-main: #e2e8f0;
+  --text-subtle: #94a3b8;
+  --surface-alt: #111827;
 }
 
 * {
@@ -26,7 +42,68 @@ body,
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(15, 108, 189, 0.12), transparent 30%),
+    radial-gradient(circle at top left, var(--brand-soft), transparent 30%),
     linear-gradient(180deg, #f7fbff 0%, var(--app-bg) 100%);
+  color: var(--text-main);
+}
+
+:root[data-theme='dark'] body {
+  background:
+    radial-gradient(circle at top left, var(--brand-soft), transparent 30%),
+    linear-gradient(180deg, #0b1220 0%, var(--app-bg) 100%);
+}
+
+.fui-Badge,
+.fui-CounterBadge,
+.history-day-header .fui-Badge {
+  border-color: var(--brand-border);
+  color: var(--brand);
+  background: var(--brand-subtle);
+}
+
+.fui-Textarea,
+.fui-Input,
+.fui-Dropdown,
+.fui-Combobox {
+  background: color-mix(in srgb, var(--surface-alt) 76%, transparent);
+  color: var(--text-main);
+}
+
+.fui-Textarea__textarea,
+.fui-Input__input,
+.fui-Combobox__input {
+  color: var(--text-main);
+}
+
+.fui-Switch__indicator {
+  border-color: var(--brand-border);
+}
+
+.fui-Radio .fui-Radio__indicator {
+  border-color: var(--brand-border);
+}
+
+.fui-Radio input:checked + .fui-Radio__indicator,
+.fui-Radio input:checked ~ .fui-Radio__indicator {
+  border-color: var(--brand) !important;
+}
+
+.fui-Radio input:checked + .fui-Radio__indicator::before,
+.fui-Radio input:checked + .fui-Radio__indicator::after,
+.fui-Radio input:checked ~ .fui-Radio__indicator::before,
+.fui-Radio input:checked ~ .fui-Radio__indicator::after {
+  background: var(--brand) !important;
+  opacity: 1 !important;
+}
+
+:root[data-theme='dark'] .fui-Button,
+:root[data-theme='dark'] .fui-Button .fui-Button__icon,
+:root[data-theme='dark'] .fui-Tab,
+:root[data-theme='dark'] .fui-Tab .fui-Tab__icon,
+:root[data-theme='dark'] .fui-Switch,
+:root[data-theme='dark'] .fui-Radio__label,
+:root[data-theme='dark'] .fui-Field__label,
+:root[data-theme='dark'] .fui-DialogTitle,
+:root[data-theme='dark'] .fui-DialogContent {
   color: var(--text-main);
 }

@@ -1,13 +1,19 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "post-mcp",
-  "outputfilename": "post-mcp",
-  "frontend:install": "pnpm install",
-  "frontend:build": "pnpm build",
-  "frontend:dev:watcher": "pnpm dev",
-  "frontend:dev:serverUrl": "auto",
-  "author": {
-    "name": "zhaozhixing01",
-    "email": "zhaozhixing01@naura.local"
-  }
+	"$schema": "https://wails.io/schemas/config.v2.json",
+	"name": "post-mcp",
+	"outputfilename": "post-mcp",
+	"frontend:install": "pnpm install",
+	"frontend:build": "pnpm build",
+	"frontend:dev:watcher": "pnpm dev",
+	"frontend:dev:serverUrl": "auto",
+	"author": {
+		"name": "Star"
+	},
+	"info": {
+		"productName": "PostMCP",
+		"companyName": "Starlight Group.",
+		"copyright": "Copyright © 2026 Starlight Group. All rights reserved.",
+		"productVersion": "1.0.0",
+		"comments": ""
+	}
 }

@@ -8,6 +8,24 @@ export namespace main {
 	    mcpCodeLanguage: string;
 	    historyLimit: number;
 	    snippetCollapsed: boolean;
+	    httpVersion: string;
+	    requestTimeout: number;
+	    maxResponseSize: number;
+	    noCacheHeader: boolean;
+	    retainHeadersOnLinkClick: boolean;
+	    followRedirects: boolean;
+	    showIconsWithTabs: boolean;
+	    sslVerification: boolean;
+	    languageDetection: string;
+	    alwaysOpenInNewTab: boolean;
+	    askOnCloseUnsaved: boolean;
+	    editorFontFamily: string;
+	    editorFontSize: number;
+	    editorIndentCount: number;
+	    editorIndentType: string;
+	    themeColor: string;
+	    themeMode: string;
+	    themeColors: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsStore(source);
@@ -22,6 +40,24 @@ export namespace main {
 	        this.mcpCodeLanguage = source["mcpCodeLanguage"];
 	        this.historyLimit = source["historyLimit"];
 	        this.snippetCollapsed = source["snippetCollapsed"];
+	        this.httpVersion = source["httpVersion"];
+	        this.requestTimeout = source["requestTimeout"];
+	        this.maxResponseSize = source["maxResponseSize"];
+	        this.noCacheHeader = source["noCacheHeader"];
+	        this.retainHeadersOnLinkClick = source["retainHeadersOnLinkClick"];
+	        this.followRedirects = source["followRedirects"];
+	        this.showIconsWithTabs = source["showIconsWithTabs"];
+	        this.sslVerification = source["sslVerification"];
+	        this.languageDetection = source["languageDetection"];
+	        this.alwaysOpenInNewTab = source["alwaysOpenInNewTab"];
+	        this.askOnCloseUnsaved = source["askOnCloseUnsaved"];
+	        this.editorFontFamily = source["editorFontFamily"];
+	        this.editorFontSize = source["editorFontSize"];
+	        this.editorIndentCount = source["editorIndentCount"];
+	        this.editorIndentType = source["editorIndentType"];
+	        this.themeColor = source["themeColor"];
+	        this.themeMode = source["themeMode"];
+	        this.themeColors = source["themeColors"];
 	    }
 	}
 	export class HistoryItem {

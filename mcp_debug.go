@@ -464,46 +464,48 @@ func (r *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func parseImportedMCPServers(raw string) ([]MCPServerConfig, []string, error) {
-	var payload map[string]any
+	var payload any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return nil, nil, fmt.Errorf("parse MCP server JSON: %w", err)
 	}
 	warnings := []string{}
 	servers := []MCPServerConfig{}
 
-	if rawServers, ok := payload["mcpServers"].(map[string]any); ok {
-		for name, value := range rawServers {
-			server, warning := parseImportedMCPServer(name, value)
-			if warning != "" {
-				warnings = append(warnings, warning)
-			}
-			if server.ID != "" {
-				servers = append(servers, server)
-			}
+	collect := func(fallbackName string, value any) {
+		server, warning := parseImportedMCPServer(fallbackName, value)
+		if warning != "" {
+			warnings = append(warnings, warning)
 		}
-		return servers, warnings, nil
+		if server.ID != "" {
+			servers = append(servers, server)
+		}
 	}
 
-	if rawArray, ok := payload["servers"].([]any); ok {
-		for _, value := range rawArray {
-			server, warning := parseImportedMCPServer("", value)
-			if warning != "" {
-				warnings = append(warnings, warning)
-			}
-			if server.ID != "" {
-				servers = append(servers, server)
-			}
+	switch typed := payload.(type) {
+	case []any:
+		for _, value := range typed {
+			collect("", value)
 		}
-		return servers, warnings, nil
+	case map[string]any:
+		if rawServers, ok := typed["mcpServers"].(map[string]any); ok {
+			for name, value := range rawServers {
+				collect(name, value)
+			}
+			break
+		}
+
+		if rawArray, ok := typed["servers"].([]any); ok {
+			for _, value := range rawArray {
+				collect("", value)
+			}
+			break
+		}
+
+		collect("", typed)
+	default:
+		return nil, nil, fmt.Errorf("parse MCP server JSON: unsupported top-level JSON type")
 	}
 
-	server, warning := parseImportedMCPServer("", payload)
-	if warning != "" {
-		warnings = append(warnings, warning)
-	}
-	if server.ID != "" {
-		servers = append(servers, server)
-	}
 	if len(servers) == 0 {
 		return nil, warnings, fmt.Errorf("no MCP server definitions found")
 	}
@@ -515,12 +517,8 @@ func parseImportedMCPServer(fallbackName string, raw any) (MCPServerConfig, stri
 	if !ok {
 		return MCPServerConfig{}, "Skipped invalid MCP server entry"
 	}
-	transport := stringValue(obj, "transport")
-	endpoint := stringValue(obj, "endpoint")
-	url := stringValue(obj, "url")
-	if endpoint == "" {
-		endpoint = url
-	}
+	transport := firstStringValue(obj, "transport", "type")
+	endpoint := firstStringValue(obj, "endpoint", "url", "baseUrl", "baseURL")
 	if transport == "" {
 		if endpoint != "" {
 			transport = TransportStreamableHTTP
@@ -558,6 +556,7 @@ func parseImportedMCPServer(fallbackName string, raw any) (MCPServerConfig, stri
 		Endpoint:  endpoint,
 		Headers:   kvPairsFromMap(obj["headers"]),
 		Env:       kvPairsFromMap(obj["env"]),
+		Disabled:  boolValue(obj, "disabled") || boolInverseValue(obj, "isActive"),
 		TimeoutMs: 30000,
 	}
 	if server.Transport == TransportStdio && server.Command == "" {
@@ -567,6 +566,33 @@ func parseImportedMCPServer(fallbackName string, raw any) (MCPServerConfig, stri
 		return MCPServerConfig{}, "Skipped remote MCP server without endpoint: " + name
 	}
 	return server, ""
+}
+
+func firstStringValue(obj map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringValue(obj, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func boolValue(obj map[string]any, key string) bool {
+	value, ok := obj[key]
+	if !ok || value == nil {
+		return false
+	}
+	b, _ := value.(bool)
+	return b
+}
+
+func boolInverseValue(obj map[string]any, key string) bool {
+	value, ok := obj[key]
+	if !ok || value == nil {
+		return false
+	}
+	b, _ := value.(bool)
+	return !b
 }
 
 func stringValue(obj map[string]any, key string) string {

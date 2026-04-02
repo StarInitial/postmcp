@@ -17,6 +17,7 @@ import {
   DialogTitle,
   Divider,
   Field,
+  FluentProvider,
   Input,
   Option,
   Dropdown,
@@ -32,6 +33,8 @@ import {
   Toaster,
   ToastTitle,
   useToastController,
+  webDarkTheme,
+  webLightTheme,
   Popover,
   PopoverSurface,
   PopoverTrigger,
@@ -145,6 +148,7 @@ function App() {
   const [serverDeleteTarget, setServerDeleteTarget] = useState(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importText, setImportText] = useState('')
+  const [importError, setImportError] = useState('')
   const [discoveries, setDiscoveries] = useState({})
   const [promptViews, setPromptViews] = useState({})
   const [resourceReader, setResourceReader] = useState(null)
@@ -155,29 +159,9 @@ function App() {
   const [toolFilterByTab, setToolFilterByTab] = useState({})
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState('general')
-  const [settingsForm, setSettingsForm] = useState({
-    httpVersion: 'HTTP/1.1',
-    requestTimeout: 0,
-    maxResponseSize: 50,
-    noCacheHeader: false,
-    retainHeadersOnLinkClick: false,
-    followRedirects: true,
-    sendUsageData: false,
-    twoPaneView: false,
-    showIconsWithTabs: true,
-    sslVerification: false,
-    languageDetection: 'Auto',
-    alwaysOpenInNewTab: false,
-    askOnCloseUnsaved: false,
-    editorFontFamily: "IBMPlexMono, 'Courier New', monospace",
-    editorFontSize: 12,
-    editorIndentCount: 4,
-    editorIndentType: 'space',
-    themeColor: '#0f6cbd',
-    themeMode: 'system',
-    themeColors: ['#0f6cbd', '#d13438', '#0078d4', '#107c10', '#ff8c00', '#8764b8'],
-  })
+  const [closeConfirmDialog, setCloseConfirmDialog] = useState({ open: false, message: '', canSaveAndClose: false })
   const [themeColorContextMenu, setThemeColorContextMenu] = useState(null)
+  const [themeColorDraft, setThemeColorDraft] = useState('#0f6cbd')
   const [editorSplitByMode, setEditorSplitByMode] = useState({
     [modes.http]: 0.56,
     [modes.mcp]: 0.56,
@@ -186,6 +170,9 @@ function App() {
   const requestEditorRef = useRef(null)
   const tabsContainerRef = useRef(null)
   const activeRequestRef = useRef(null)
+  const closeConfirmActionRef = useRef(null)
+  const closeConfirmSaveActionRef = useRef(null)
+  const collectionSaveAfterActionRef = useRef(null)
   const splitDragRef = useRef(null)
   const [activeRequest, setActiveRequest] = useState(null)
 
@@ -266,7 +253,18 @@ function App() {
     () => bootstrap.workspace.tabs.find((tab) => tab.id === bootstrap.workspace.activeTabId) || bootstrap.workspace.tabs[0],
     [bootstrap.workspace],
   )
+  const settingsForm = bootstrap.settings
+  const resolvedTheme = useMemo(() => resolveThemeMode(settingsForm.themeMode), [settingsForm.themeMode])
+  const fluentTheme = useMemo(() => buildFluentTheme(resolvedTheme, settingsForm.themeColor), [resolvedTheme, settingsForm.themeColor])
+  const appThemeVars = useMemo(() => buildBrandCSSVars(settingsForm.themeColor), [settingsForm.themeColor])
   const activeSplitRatio = editorSplitByMode[activeTab?.mode || modes.http] ?? 0.56
+  const normalizedThemeColorDraft = useMemo(() => normalizeHexColor(themeColorDraft), [themeColorDraft])
+  const normalizedActiveThemeColor = useMemo(() => normalizeHexColor(settingsForm.themeColor), [settingsForm.themeColor])
+  const themeDraftExists = useMemo(
+    () => settingsForm.themeColors.map((color) => normalizeHexColor(color)).includes(normalizedThemeColorDraft),
+    [settingsForm.themeColors, normalizedThemeColorDraft],
+  )
+  const themeDraftIsActive = normalizedActiveThemeColor === normalizedThemeColorDraft
   const editorBodyStyle = useMemo(
     () => ({ flexGrow: activeSplitRatio, flexBasis: 0, minHeight: 0 }),
     [activeSplitRatio],
@@ -303,6 +301,16 @@ function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeTab])
+
+  useEffect(() => {
+    const language = resolveLanguageDetection(settingsForm.languageDetection)
+    document.documentElement.lang = language
+  }, [settingsForm.languageDetection])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme
+    document.documentElement.style.setProperty('color-scheme', resolvedTheme)
+  }, [resolvedTheme])
 
   useEffect(() => {
     const stripFindWidgetTooltips = () => {
@@ -376,11 +384,20 @@ function App() {
     }
   }, [editorResizing])
 
+  useEffect(() => {
+    setThemeColorDraft(normalizeHexColor(settingsForm.themeColor))
+  }, [settingsDialogOpen, settingsForm.themeColor])
+
   useContextMenuDismiss(Boolean(historyContextMenu), '.history-context-menu', () => setHistoryContextMenu(null))
 
+  const enabledMcpServers = useMemo(
+    () => bootstrap.mcpServers.servers.filter((server) => !server.disabled),
+    [bootstrap.mcpServers.servers],
+  )
+
   const currentServer = useMemo(
-    () => bootstrap.mcpServers.servers.find((server) => server.id === activeTab?.mcp?.serverId),
-    [bootstrap.mcpServers.servers, activeTab],
+    () => enabledMcpServers.find((server) => server.id === activeTab?.mcp?.serverId),
+    [enabledMcpServers, activeTab],
   )
 
   const serverProbeSignature = useMemo(
@@ -500,6 +517,10 @@ function App() {
     }))
   }
 
+  function updateSettings(patch) {
+    setSettings((settings) => ({ ...settings, ...patch }))
+  }
+
   function patchActiveTab(mutator) {
     if (!activeTab) {
       return
@@ -600,7 +621,103 @@ function App() {
     }))
   }
 
-  function closeTab(tabId) {
+  function requestCloseConfirm(message, onConfirm, onSaveAndClose) {
+    closeConfirmActionRef.current = onConfirm
+    closeConfirmSaveActionRef.current = onSaveAndClose || null
+    setCloseConfirmDialog({ open: true, message, canSaveAndClose: typeof onSaveAndClose === 'function' })
+  }
+
+  function dismissCloseConfirm() {
+    closeConfirmActionRef.current = null
+    closeConfirmSaveActionRef.current = null
+    setCloseConfirmDialog({ open: false, message: '', canSaveAndClose: false })
+  }
+
+  function confirmClose() {
+    const action = closeConfirmActionRef.current
+    dismissCloseConfirm()
+    if (typeof action === 'function') {
+      action()
+    }
+  }
+
+  function confirmSaveAndClose() {
+    const action = closeConfirmSaveActionRef.current
+    dismissCloseConfirm()
+    if (typeof action === 'function') {
+      action()
+    }
+  }
+
+  function saveTabThenClose(tab, onDone) {
+    if (!tab) {
+      return
+    }
+    if (tab.linkedNodeId) {
+      setCollections((store) => ({
+        ...store,
+        items: updateCollectionNode(store.items, tab.linkedNodeId, (node) => ({
+          ...node,
+          request: {
+            mode: tab.mode,
+            http: tab.http,
+            mcp: tab.mcp,
+          },
+        })),
+      }))
+      onDone?.()
+      return
+    }
+
+    collectionSaveAfterActionRef.current = onDone || null
+    openCollectionSaveDialog({
+      name: tab.title || (tab.mode === modes.http ? '新建 HTTP 请求' : '新建 MCP 调用'),
+      mode: tab.mode,
+      payload: tab,
+    })
+  }
+
+  function saveLinkedTabsThenClose(tabIDs, onDone) {
+    const targets = bootstrap.workspace.tabs.filter((tab) => tabIDs.includes(tab.id) && shouldPromptSaveForTab(tab, bootstrap.collections.items))
+    if (!targets.length) {
+      onDone?.()
+      return
+    }
+    setCollections((store) => {
+      let items = store.items
+      targets.forEach((tab) => {
+        if (!tab.linkedNodeId) {
+          return
+        }
+        items = updateCollectionNode(items, tab.linkedNodeId, (node) => ({
+          ...node,
+          request: {
+            mode: tab.mode,
+            http: tab.http,
+            mcp: tab.mcp,
+          },
+        }))
+      })
+      return {
+        ...store,
+        items,
+      }
+    })
+    onDone?.()
+  }
+
+  function closeTab(tabId, force = false) {
+    const tab = bootstrap.workspace.tabs.find((item) => item.id === tabId)
+    const pendingSave = shouldPromptSaveForTab(tab, bootstrap.collections.items)
+    if (!force && settingsForm.askOnCloseUnsaved && pendingSave) {
+      requestCloseConfirm(
+        `Tab \"${tab?.title || '未命名请求'}\" 有未保存改动，是否继续关闭？`,
+        () => closeTab(tabId, true),
+        () => saveTabThenClose(tab, () => closeTab(tabId, true)),
+      )
+      return
+    }
+
     setWorkspace((workspace) => {
       const tabs = workspace.tabs.filter((tab) => tab.id !== tabId)
       if (!tabs.length) {
@@ -645,7 +762,20 @@ function App() {
     addTab(source.mode, nextTab)
   }
 
-  function closeOtherTabs(tabId) {
+  function closeOtherTabs(tabId, force = false) {
+    const protectedTabs = bootstrap.workspace.tabs.filter((tab) => tab.id !== tabId)
+    const unsavedTabs = protectedTabs.filter((tab) => shouldPromptSaveForTab(tab, bootstrap.collections.items))
+    const unsavedCount = unsavedTabs.length
+    if (!force && settingsForm.askOnCloseUnsaved && unsavedCount > 0) {
+      const allLinked = unsavedTabs.every((tab) => Boolean(tab.linkedNodeId))
+      requestCloseConfirm(
+        `将关闭的标签页中有 ${unsavedCount} 个未保存改动，是否继续？`,
+        () => closeOtherTabs(tabId, true),
+        allLinked ? () => saveLinkedTabsThenClose(protectedTabs.map((tab) => tab.id), () => closeOtherTabs(tabId, true)) : null,
+      )
+      return
+    }
+
     setWorkspace((workspace) => {
       const target = workspace.tabs.find((tab) => tab.id === tabId)
       if (!target) {
@@ -659,7 +789,19 @@ function App() {
     })
   }
 
-  function closeAllTabs() {
+  function closeAllTabs(force = false) {
+    const unsavedTabs = bootstrap.workspace.tabs.filter((tab) => shouldPromptSaveForTab(tab, bootstrap.collections.items))
+    const unsavedCount = unsavedTabs.length
+    if (!force && settingsForm.askOnCloseUnsaved && unsavedCount > 0) {
+      const allLinked = unsavedTabs.every((tab) => Boolean(tab.linkedNodeId))
+      requestCloseConfirm(
+        `当前有 ${unsavedCount} 个未保存改动的标签页，是否继续关闭全部？`,
+        () => closeAllTabs(true),
+        allLinked ? () => saveLinkedTabsThenClose(bootstrap.workspace.tabs.map((tab) => tab.id), () => closeAllTabs(true)) : null,
+      )
+      return
+    }
+
     const fallback = createWorkspaceTab(modes.http, bootstrap.mcpServers.servers)
     setWorkspace((workspace) => ({
       ...workspace,
@@ -684,8 +826,10 @@ function App() {
         duplicateTab(tabId)
         break
       case 'close':
-      case 'force-close':
         closeTab(tabId)
+        break
+      case 'force-close':
+        closeTab(tabId, true)
         break
       case 'close-others':
         closeOtherTabs(tabId)
@@ -702,7 +846,7 @@ function App() {
     patchActiveTab((tab) => {
       tab.mode = nextMode
       if (nextMode === modes.mcp && !tab.mcp.serverId) {
-        tab.mcp.serverId = bootstrap.mcpServers.servers[0]?.id || ''
+        tab.mcp.serverId = enabledMcpServers[0]?.id || ''
       }
       return tab
     })
@@ -1126,18 +1270,23 @@ function App() {
 
   async function importServers() {
     if (!importText.trim()) {
+      setImportError('请先粘贴 MCP JSON。')
       return
     }
 
     setBusy(true)
+    setImportError('')
     try {
       const result = await invokeBackend('ImportMCPServers', importText)
       setBootstrap((previous) => ({ ...previous, mcpServers: normalizeServerStore(result.servers) }))
       setImportDialogOpen(false)
       setImportText('')
+      setImportError('')
       setStatusMessage(result.warnings?.length ? result.warnings.join(' | ') : `已导入 ${result.added?.length || 0} 个 MCP 服务器。`)
     } catch (error) {
-      setStatusMessage(String(error?.message || error))
+      const message = String(error?.message || error)
+      setImportError(message)
+      setStatusMessage(message)
     } finally {
       setBusy(false)
     }
@@ -1234,6 +1383,12 @@ function App() {
     setCollectionSaveDialogOpen(false)
     setCollectionSaveSource(null)
     setStatusMessage(`已将 ${node.name} 保存到收藏集。`)
+
+    const afterAction = collectionSaveAfterActionRef.current
+    collectionSaveAfterActionRef.current = null
+    if (typeof afterAction === 'function') {
+      afterAction()
+    }
   }
 
   function addCollectionFolder(parentId = collectionRootValue) {
@@ -1367,7 +1522,7 @@ function App() {
     }
 
     const existingTab = bootstrap.workspace.tabs.find((tab) => tab.linkedNodeId === node.id)
-    if (existingTab) {
+    if (existingTab && !settingsForm.alwaysOpenInNewTab) {
       setWorkspace((workspace) => ({
         ...workspace,
         activeTabId: existingTab.id,
@@ -1494,7 +1649,7 @@ function App() {
     const summary = parseJson(detailedItem?.summaryJson || '{}', {})
     const existingTab = bootstrap.workspace.tabs.find((tab) => tab.linkedHistoryId === item.id)
 
-    if (existingTab) {
+    if (existingTab && !settingsForm.alwaysOpenInNewTab) {
       setWorkspace((workspace) => ({
         ...workspace,
         activeTabId: existingTab.id,
@@ -1616,14 +1771,17 @@ function App() {
 
   if (loading) {
     return (
-      <div className="splash-screen">
-        <Spinner label="正在加载 Post MCP 工作区..." />
-      </div>
+      <FluentProvider theme={fluentTheme}>
+        <div className="splash-screen" style={appThemeVars}>
+          <Spinner label="正在加载 Post MCP 工作区..." />
+        </div>
+      </FluentProvider>
     )
   }
 
   return (
-    <div className="app-shell">
+    <FluentProvider theme={fluentTheme}>
+      <div className="app-shell" style={appThemeVars}>
       <aside className="sidebar-panel">
         <div className="sidebar-header">
           <div>
@@ -1672,7 +1830,7 @@ function App() {
                   <Button size="small" icon={<AddRegular />} onClick={() => { setServerDraft(createServerDraft()); setServerDialogOpen(true) }}>
                     添加
                   </Button>
-                  <Button size="small" icon={<ArrowDownloadRegular />} onClick={() => setImportDialogOpen(true)}>
+                  <Button size="small" icon={<ArrowDownloadRegular />} onClick={() => { setImportError(''); setImportDialogOpen(true) }}>
                     导入 JSON
                   </Button>
                 </div>
@@ -1769,6 +1927,9 @@ function App() {
                 onClick={() => setWorkspace((workspace) => ({ ...workspace, activeTabId: tab.id }))}
                 onContextMenu={(event) => openTabContextMenu(event, tab)}
               >
+                {settingsForm.showIconsWithTabs && (
+                  <span className="tab-mode-icon">{tab.mode === modes.http ? <DocumentRegular /> : <StickerRegular />}</span>
+                )}
                 <span className="tab-method">{tab.mode === modes.http ? tab.http.method : 'MCP'}</span>
                 <span className="tab-url">{tab.title || (tab.mode === modes.http ? (tab.http.url || '新建请求') : (tab.mcp.toolName || '选择工具'))}</span>
                 {isCollectionTabDirty(tab, bootstrap.collections.items) && <span className="tab-dirty-indicator">*</span>}
@@ -1840,7 +2001,7 @@ function App() {
 
                       <Field label="MCP 服务器" className="compact-field grow-field mcp-server-field">
                         <Dropdown className="mcp-server-dropdown" selectedOptions={[activeTab.mcp.serverId]} value={currentServer?.name || '选择服务器'} onOptionSelect={(_, data) => updateMcpRequest('serverId', data.optionValue)}>
-                          {bootstrap.mcpServers.servers.map((server) => (
+                          {enabledMcpServers.map((server) => (
                             <Option key={server.id} value={server.id}>{server.name}</Option>
                           ))}
                         </Dropdown>
@@ -1923,13 +2084,33 @@ function App() {
                         <HttpAuthEditor auth={activeTab.http.auth} onChange={(path, value) => updateHttpRequest(`auth.${path}`, value)} />
                       )}
                       {httpEditorTab === 'body' && (
-                        <HttpBodyEditor body={activeTab.http.body} onChange={(path, value) => updateHttpRequest(`body.${path}`, value)} />
+                        <HttpBodyEditor body={activeTab.http.body} onChange={(path, value) => updateHttpRequest(`body.${path}`, value)} editorSettings={settingsForm} />
                       )}
                     </div>
                   </div>
                   <div className="editor-splitter" onPointerDown={startEditorSplitDrag} role="separator" aria-orientation="horizontal" aria-label="调整请求与响应区域高度" />
                   <div className="response-shell-host" style={responseBodyStyle}>
-                    <ResponsePanelHTTP response={activeTab.lastHttp} />
+                    <ResponsePanelHTTP
+                      response={activeTab.lastHttp}
+                      editorSettings={settingsForm}
+                      onOpenResolvedURL={(resolvedURL) => {
+                        if (!resolvedURL) {
+                          return
+                        }
+                        const sourceHeaders = settingsForm.retainHeadersOnLinkClick ? (activeTab.http.headers || []) : []
+                        addTab(modes.http, {
+                          ...createWorkspaceTab(modes.http, bootstrap.mcpServers.servers),
+                          mode: modes.http,
+                          title: resolvedURL,
+                          http: {
+                            ...createWorkspaceTab(modes.http, bootstrap.mcpServers.servers).http,
+                            method: 'GET',
+                            url: resolvedURL,
+                            headers: sourceHeaders.map((item) => ({ ...item, id: newPair().id })),
+                          },
+                        })
+                      }}
+                    />
                     {isHttpRequestActive && (
                       <div className="response-loading-mask">
                         <Spinner size="medium" label="请求中" />
@@ -1954,6 +2135,7 @@ function App() {
                               tool={currentDiscovery.tools?.find((item) => item.name === activeTab.mcp.toolName)}
                               argumentsJson={activeTab.mcp.argumentsJson}
                               onArgumentsChange={(value) => updateMcpRequest('argumentsJson', value)}
+                              editorSettings={settingsForm}
                             />
                           )}
                           {mcpInspectorTab === 'prompts' && (
@@ -2044,16 +2226,16 @@ function App() {
                       <h3 className="settings-section-title">🧩 请求设置</h3>
                       <div className="settings-grid">
                         <Field label="HTTP 版本">
-                          <Dropdown selectedOptions={[settingsForm.httpVersion]} value={settingsForm.httpVersion} onOptionSelect={(_, data) => setSettingsForm((f) => ({ ...f, httpVersion: data.optionValue }))}>
+                          <Dropdown selectedOptions={[settingsForm.httpVersion]} value={settingsForm.httpVersion} onOptionSelect={(_, data) => updateSettings({ httpVersion: data.optionValue })}>
                             <Option value="HTTP/1.1">HTTP/1.1</Option>
                             <Option value="HTTP/2">HTTP/2</Option>
                           </Dropdown>
                         </Field>
                         <Field label="请求超时时间（毫秒）">
-                          <Input type="number" value={String(settingsForm.requestTimeout)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, requestTimeout: Number(data.value || 0) }))} />
+                          <Input type="number" value={String(settingsForm.requestTimeout)} onChange={(_, data) => updateSettings({ requestTimeout: Number(data.value || 0) })} />
                         </Field>
                         <Field label="最大响应大小（MB）">
-                          <Input type="number" value={String(settingsForm.maxResponseSize)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, maxResponseSize: Number(data.value || 0) }))} />
+                          <Input type="number" value={String(settingsForm.maxResponseSize)} onChange={(_, data) => updateSettings({ maxResponseSize: Number(data.value || 0) })} />
                         </Field>
                       </div>
                     </div>
@@ -2061,23 +2243,23 @@ function App() {
                     <div className="settings-section">
                       <h3 className="settings-section-title">📬 头信息设置</h3>
                       <div className="settings-switches">
-                        <Switch checked={settingsForm.noCacheHeader} label="发送 no-cache 头" onChange={(_, data) => setSettingsForm((f) => ({ ...f, noCacheHeader: data.checked }))} />
-                        <Switch checked={settingsForm.retainHeadersOnLinkClick} label="点击链接时保留头信息" onChange={(_, data) => setSettingsForm((f) => ({ ...f, retainHeadersOnLinkClick: data.checked }))} />
-                        <Switch checked={settingsForm.followRedirects} label="自动跟随重定向" onChange={(_, data) => setSettingsForm((f) => ({ ...f, followRedirects: data.checked }))} />
+                        <Switch checked={settingsForm.noCacheHeader} label="发送 no-cache 头" onChange={(_, data) => updateSettings({ noCacheHeader: data.checked })} />
+                        <Switch checked={settingsForm.retainHeadersOnLinkClick} label="点击链接时保留头信息" onChange={(_, data) => updateSettings({ retainHeadersOnLinkClick: data.checked })} />
+                        <Switch checked={settingsForm.followRedirects} label="自动跟随重定向" onChange={(_, data) => updateSettings({ followRedirects: data.checked })} />
                       </div>
                     </div>
 
                     <div className="settings-section">
                       <h3 className="settings-section-title">🖥️ 用户界面</h3>
                       <div className="settings-switches">
-                        <Switch checked={settingsForm.showIconsWithTabs} label="标签页名称旁显示图标" onChange={(_, data) => setSettingsForm((f) => ({ ...f, showIconsWithTabs: data.checked }))} />
+                        <Switch checked={settingsForm.showIconsWithTabs} label="标签页名称旁显示图标" onChange={(_, data) => updateSettings({ showIconsWithTabs: data.checked })} />
                       </div>
                     </div>
 
                     <div className="settings-section">
                       <h3 className="settings-section-title">🔐 SSL 证书验证</h3>
                       <div className="settings-switches">
-                        <Switch checked={settingsForm.sslVerification} label="SSL 证书验证" onChange={(_, data) => setSettingsForm((f) => ({ ...f, sslVerification: data.checked }))} />
+                        <Switch checked={settingsForm.sslVerification} label="SSL 证书验证" onChange={(_, data) => updateSettings({ sslVerification: data.checked })} />
                       </div>
                     </div>
 
@@ -2085,7 +2267,7 @@ function App() {
                       <h3 className="settings-section-title">🌍 语言检测</h3>
                       <div className="settings-grid">
                         <Field label="语言检测">
-                          <Dropdown selectedOptions={[settingsForm.languageDetection]} value={settingsForm.languageDetection} onOptionSelect={(_, data) => setSettingsForm((f) => ({ ...f, languageDetection: data.optionValue }))}>
+                          <Dropdown selectedOptions={[settingsForm.languageDetection]} value={settingsForm.languageDetection} onOptionSelect={(_, data) => updateSettings({ languageDetection: data.optionValue })}>
                             <Option value="Auto">自动</Option>
                             <Option value="zh-CN">简体中文</Option>
                             <Option value="en-US">英语</Option>
@@ -2097,8 +2279,8 @@ function App() {
                     <div className="settings-section">
                       <h3 className="settings-section-title">🗂️ 标签页与文件行为</h3>
                       <div className="settings-switches">
-                        <Switch checked={settingsForm.alwaysOpenInNewTab} label="始终在新标签页打开请求" onChange={(_, data) => setSettingsForm((f) => ({ ...f, alwaysOpenInNewTab: data.checked }))} />
-                        <Switch checked={settingsForm.askOnCloseUnsaved} label="关闭未保存标签页时总是询问" onChange={(_, data) => setSettingsForm((f) => ({ ...f, askOnCloseUnsaved: data.checked }))} />
+                        <Switch checked={settingsForm.alwaysOpenInNewTab} label="始终在新标签页打开请求" onChange={(_, data) => updateSettings({ alwaysOpenInNewTab: data.checked })} />
+                        <Switch checked={settingsForm.askOnCloseUnsaved} label="关闭未保存标签页时总是询问" onChange={(_, data) => updateSettings({ askOnCloseUnsaved: data.checked })} />
                       </div>
                     </div>
 
@@ -2106,16 +2288,16 @@ function App() {
                       <h3 className="settings-section-title">✍️ 编辑器设置</h3>
                       <div className="settings-grid">
                         <Field label="字体家族">
-                          <Input value={settingsForm.editorFontFamily} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorFontFamily: data.value }))} />
+                          <Input value={settingsForm.editorFontFamily} onChange={(_, data) => updateSettings({ editorFontFamily: data.value })} />
                         </Field>
                         <Field label="字体大小（px）">
-                          <Input type="number" value={String(settingsForm.editorFontSize)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorFontSize: Number(data.value || 12) }))} />
+                          <Input type="number" value={String(settingsForm.editorFontSize)} onChange={(_, data) => updateSettings({ editorFontSize: Number(data.value || 12) })} />
                         </Field>
                         <Field label="缩进空格数">
-                          <Input type="number" value={String(settingsForm.editorIndentCount)} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorIndentCount: Number(data.value || 4) }))} />
+                          <Input type="number" value={String(settingsForm.editorIndentCount)} onChange={(_, data) => updateSettings({ editorIndentCount: Number(data.value || 4) })} />
                         </Field>
                         <Field label="缩进类型">
-                          <RadioGroup value={settingsForm.editorIndentType} onChange={(_, data) => setSettingsForm((f) => ({ ...f, editorIndentType: data.value }))}>
+                          <RadioGroup value={settingsForm.editorIndentType} onChange={(event, data) => updateSettings({ editorIndentType: data.value || event?.target?.value || 'space' })}>
                             <Radio value="space" label="空格" />
                             <Radio value="tab" label="制表符" />
                           </RadioGroup>
@@ -2134,7 +2316,7 @@ function App() {
                             key={color}
                             className={`theme-color-swatch ${settingsForm.themeColor === color ? 'active' : ''}`}
                             style={{ backgroundColor: color }}
-                            onClick={() => setSettingsForm((f) => ({ ...f, themeColor: color }))}
+                            onClick={() => updateSettings({ themeColor: color })}
                             onContextMenu={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
@@ -2148,20 +2330,36 @@ function App() {
                             {settingsForm.themeColor === color && <CheckRegular className="theme-color-check-icon" />}
                           </div>
                         ))}
-                        <label className="theme-color-add" title="添加主题色">
+                        <label className="theme-color-add theme-color-add-preview" title="选择候选主题色" style={{ backgroundColor: normalizedThemeColorDraft }}>
                           <AddRegular />
                           <input
                             type="color"
-                            value={settingsForm.themeColor}
+                            value={normalizedThemeColorDraft}
                             onChange={(e) => {
-                              const newColor = e.target.value
-                              setSettingsForm((f) => ({ ...f, themeColor: newColor }))
-                              if (!settingsForm.themeColors.includes(newColor)) {
-                                setSettingsForm((f) => ({ ...f, themeColors: [...f.themeColors, newColor] }))
-                              }
+                              setThemeColorDraft(normalizeHexColor(e.target.value))
                             }}
                           />
                         </label>
+                      </div>
+                      <div className="theme-color-picker-actions">
+                        <span className="theme-color-draft-label">候选色：{normalizedThemeColorDraft}</span>
+                        <Button
+                          appearance="primary"
+                          onClick={() => {
+                            const pickedColor = normalizedThemeColorDraft
+                            const normalizedColors = settingsForm.themeColors.map((color) => normalizeHexColor(color))
+                            const nextColors = normalizedColors.includes(pickedColor) ? normalizedColors : [...normalizedColors, pickedColor]
+                            updateSettings({
+                              themeColor: pickedColor,
+                              themeColors: nextColors,
+                            })
+                          }}
+                          disabled={themeDraftExists && themeDraftIsActive}
+                        >
+                          {themeDraftExists
+                            ? (themeDraftIsActive ? '当前已使用该颜色' : '应用候选色')
+                            : `添加并应用 ${normalizedThemeColorDraft}`}
+                        </Button>
                       </div>
 
                       {themeColorContextMenu && (
@@ -2183,7 +2381,7 @@ function App() {
                               className="context-menu-item"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                setSettingsForm((f) => ({ ...f, themeColor: themeColorContextMenu.color }))
+                                updateSettings({ themeColor: themeColorContextMenu.color })
                                 setThemeColorContextMenu(null)
                               }}
                             >
@@ -2194,11 +2392,11 @@ function App() {
                               className="context-menu-item danger"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                setSettingsForm((f) => ({
-                                  ...f,
-                                  themeColors: f.themeColors.filter((c) => c !== themeColorContextMenu.color),
-                                  themeColor: f.themeColor === themeColorContextMenu.color ? f.themeColors[0] : f.themeColor,
-                                }))
+                                const nextColors = settingsForm.themeColors.filter((c) => c !== themeColorContextMenu.color)
+                                updateSettings({
+                                  themeColors: nextColors,
+                                  themeColor: settingsForm.themeColor === themeColorContextMenu.color ? (nextColors[0] || '#0f6cbd') : settingsForm.themeColor,
+                                })
                                 setThemeColorContextMenu(null)
                               }}
                             >
@@ -2213,7 +2411,7 @@ function App() {
                     <div className="settings-section">
                       <h3 className="settings-section-title">🌓 主题模式</h3>
                       <div className="settings-switches">
-                        <RadioGroup value={settingsForm.themeMode} onChange={(_, data) => setSettingsForm((f) => ({ ...f, themeMode: data.value }))}>
+                        <RadioGroup value={settingsForm.themeMode} onChange={(event, data) => updateSettings({ themeMode: data.value || event?.target?.value || 'system' })}>
                           <Radio value="system" label="跟随系统" />
                           <Radio value="light" label="亮色" />
                           <Radio value="dark" label="暗色" />
@@ -2273,7 +2471,27 @@ function App() {
         </DialogSurface>
       </Dialog>
 
-      <Dialog open={collectionSaveDialogOpen} onOpenChange={(_, data) => { setCollectionSaveDialogOpen(data.open); if (!data.open) { setCollectionSaveSource(null) } }}>
+      <Dialog open={closeConfirmDialog.open} onOpenChange={(_, data) => { if (!data.open) { dismissCloseConfirm() } }}>
+        <DialogSurface className="dialog-surface dialog-surface-compact">
+          <DialogBody>
+            <DialogTitle>关闭确认</DialogTitle>
+            <DialogContent>{closeConfirmDialog.message || '存在未保存改动，是否继续关闭？'}</DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={dismissCloseConfirm}>取消</Button>
+              <Button appearance="primary" onClick={confirmSaveAndClose} disabled={!closeConfirmDialog.canSaveAndClose}>保存后关闭</Button>
+              <Button appearance="primary" className="close-confirm-force-button" onClick={confirmClose}>直接关闭</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={collectionSaveDialogOpen} onOpenChange={(_, data) => {
+        setCollectionSaveDialogOpen(data.open)
+        if (!data.open) {
+          setCollectionSaveSource(null)
+          collectionSaveAfterActionRef.current = null
+        }
+      }}>
         <DialogSurface className="dialog-surface dialog-surface-compact">
           <DialogBody>
             <DialogTitle>保存到收藏夹</DialogTitle>
@@ -2517,15 +2735,17 @@ function App() {
         </div>
       )}
 
-      <Dialog open={importDialogOpen} onOpenChange={(_, data) => setImportDialogOpen(data.open)}>
+      <Dialog open={importDialogOpen} onOpenChange={(_, data) => { setImportDialogOpen(data.open); if (!data.open) { setImportError('') } }}>
         <DialogSurface className="dialog-surface">
           <DialogBody>
             <DialogTitle>导入 MCP 服务器</DialogTitle>
             <DialogContent>
-              <Field label="粘贴 MCP JSON"><Textarea resize="vertical" className="import-textarea" value={importText} onChange={(_, data) => setImportText(data.value)} /></Field>
+              <Field label="粘贴 MCP JSON" validationMessage={importError || undefined} validationState={importError ? 'error' : undefined}>
+                <Textarea resize="vertical" className="import-textarea" value={importText} onChange={(_, data) => { setImportText(data.value); if (importError) { setImportError('') } }} />
+              </Field>
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={() => setImportDialogOpen(false)}>取消</Button>
+              <Button appearance="secondary" onClick={() => { setImportDialogOpen(false); setImportError('') }}>取消</Button>
               <Button appearance="primary" onClick={importServers}>导入</Button>
             </DialogActions>
           </DialogBody>
@@ -2545,7 +2765,8 @@ function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-    </div>
+      </div>
+    </FluentProvider>
   )
 }
 
@@ -2795,7 +3016,7 @@ function HttpAuthEditor({ auth, onChange }) {
   )
 }
 
-function HttpBodyEditor({ body, onChange }) {
+function HttpBodyEditor({ body, onChange, editorSettings }) {
   const mode = httpBodyModes.includes(body.mode) ? body.mode : 'none'
   const rawType = normalizeRawType(body.rawType)
   const rawEditorRef = useRef(null)
@@ -2871,6 +3092,7 @@ function HttpBodyEditor({ body, onChange }) {
             content={body.raw}
             onContentChange={(value) => onChange('raw', value)}
             editorRef={rawEditorRef}
+            editorSettings={editorSettings}
           />
         )}
 
@@ -3005,7 +3227,7 @@ function UrlEncodedBodyTable({ rows, onChange }) {
   )
 }
 
-function RawBodyEditor({ rawType, content, onContentChange, editorRef }) {
+function RawBodyEditor({ rawType, content, onContentChange, editorRef, editorSettings }) {
   const [diagnostics, setDiagnostics] = useState([])
   const language = rawTypeLanguageMap[rawType] || 'plaintext'
 
@@ -3015,6 +3237,7 @@ function RawBodyEditor({ rawType, content, onContentChange, editorRef }) {
         <Editor
           height="280px"
           language={language}
+          theme={resolveEditorTheme(editorSettings?.themeMode)}
           value={content}
           onChange={(value) => onContentChange(value || '')}
           onValidate={(markers) => setDiagnostics(markers || [])}
@@ -3022,16 +3245,7 @@ function RawBodyEditor({ rawType, content, onContentChange, editorRef }) {
             editorRef.current = editor
             disableMonacoFindTooltips(editor)
           }}
-          options={{
-            automaticLayout: true,
-            minimap: { enabled: false },
-            quickSuggestions: true,
-            suggestOnTriggerCharacters: true,
-            fixedOverflowWidgets: true,
-            scrollbar: { alwaysConsumeMouseWheel: false },
-            tabSize: 2,
-            scrollBeyondLastLine: false,
-          }}
+          options={buildEditorOptions(editorSettings)}
         />
       </div>
       <Caption1 className={diagnostics.length ? 'raw-diagnostics-error' : 'raw-diagnostics-ok'}>
@@ -3109,7 +3323,7 @@ function readFileAsBase64(file) {
   })
 }
 
-function ResponsePanelHTTP({ response }) {
+function ResponsePanelHTTP({ response, editorSettings, onOpenResolvedURL }) {
   const [responseTab, setResponseTab] = useState('body')
   const [bodyViewMode, setBodyViewMode] = useState('formatted')
   const [formatType, setFormatType] = useState('json')
@@ -3127,8 +3341,12 @@ function ResponsePanelHTTP({ response }) {
 
   if (!response) {
     return (
-      <div className="response-shell">
-        <EmptyState text="发送 HTTP 请求后，可在此查看状态码、响应头、响应体及大小信息。" />
+      <div className="response-shell response-shell-mcp">
+        <EmptyState
+          text="发送 HTTP 请求后，可在此查看状态码、响应头、响应体及大小信息。"
+          icon={<DocumentRegular />}
+          fill
+        />
       </div>
     )
   }
@@ -3206,6 +3424,7 @@ function ResponsePanelHTTP({ response }) {
               </div>
 
               <div className="response-body-toolbar-actions">
+                <Button appearance="subtle" title="基于最终 URL 新建请求" onClick={() => onOpenResolvedURL?.(response.resolvedUrl)} disabled={!response.resolvedUrl}>打开 URL</Button>
                 <Button appearance="subtle" icon={<CopyRegular />} title="复制" aria-label="复制响应体" onClick={copyResponseBody} />
                 <Button appearance="subtle" icon={<SearchRegular />} title="搜索" aria-label="搜索响应体" onClick={searchResponseBody} />
                 <Button appearance="subtle" icon={<SaveRegular />} title="保存为文件" aria-label="保存响应体为文件" onClick={saveResponseBodyToFile} />
@@ -3217,18 +3436,15 @@ function ResponsePanelHTTP({ response }) {
                 <Editor
                   height="100%"
                   language={formatType}
+                  theme={resolveEditorTheme(editorSettings?.themeMode)}
                   value={formatHttpBody(responseBodyText, formatType)}
                   onMount={(editor) => {
                     formattedEditorRef.current = editor
                     disableMonacoFindTooltips(editor)
                   }}
                   options={{
-                    automaticLayout: true,
-                    minimap: { enabled: false },
+                    ...buildEditorOptions(editorSettings),
                     readOnly: true,
-                    scrollBeyondLastLine: false,
-                    fixedOverflowWidgets: true,
-                    scrollbar: { alwaysConsumeMouseWheel: false },
                   }}
                 />
               </div>
@@ -3413,7 +3629,7 @@ function disableMonacoFindTooltips(editor) {
   })
 }
 
-function McpToolEditor({ tool, argumentsJson, onArgumentsChange }) {
+function McpToolEditor({ tool, argumentsJson, onArgumentsChange, editorSettings }) {
   const parsed = parseJson(argumentsJson || '{}', {})
   const properties = tool?.inputSchema?.properties || {}
   const argumentsEditorRef = useRef(null)
@@ -3493,6 +3709,7 @@ function McpToolEditor({ tool, argumentsJson, onArgumentsChange }) {
                 <Editor
                   height="280px"
                   language="json"
+                  theme={resolveEditorTheme(editorSettings?.themeMode)}
                   value={argumentsJson || '{}'}
                   onChange={(value) => onArgumentsChange(value || '')}
                   onValidate={(markers) => setArgumentsDiagnostics(markers || [])}
@@ -3500,16 +3717,7 @@ function McpToolEditor({ tool, argumentsJson, onArgumentsChange }) {
                     argumentsEditorRef.current = editor
                     disableMonacoFindTooltips(editor)
                   }}
-                  options={{
-                    automaticLayout: true,
-                    minimap: { enabled: false },
-                    quickSuggestions: true,
-                    suggestOnTriggerCharacters: true,
-                    fixedOverflowWidgets: true,
-                    scrollbar: { alwaysConsumeMouseWheel: false },
-                    tabSize: 2,
-                    scrollBeyondLastLine: false,
-                  }}
+                  options={buildEditorOptions(editorSettings)}
                 />
               </div>
               <Caption1 className={argumentsDiagnostics.length ? 'raw-diagnostics-error' : 'raw-diagnostics-ok'}>
@@ -3747,11 +3955,179 @@ function normalizeBootstrap(data) {
       http: { ...fallback.history.http, ...(data?.history?.http || {}) },
       mcp: { ...fallback.history.mcp, ...(data?.history?.mcp || {}) },
     },
-    settings: {
-      ...fallback.settings,
-      ...(data?.settings || {}),
-    },
+    settings: normalizeSettings(data?.settings, fallback.settings),
   }
+}
+
+function normalizeSettings(settings, fallback) {
+  const merged = {
+    ...fallback,
+    ...(settings || {}),
+  }
+  const normalizedThemeColors = []
+  if (Array.isArray(merged.themeColors)) {
+    const seen = new Set()
+    merged.themeColors.forEach((item) => {
+      if (typeof item !== 'string') {
+        return
+      }
+      const color = normalizeHexColor(item)
+      if (seen.has(color)) {
+        return
+      }
+      seen.add(color)
+      normalizedThemeColors.push(color)
+    })
+  }
+  const normalizedThemeColor = normalizeHexColor(merged.themeColor)
+  const themeColors = normalizedThemeColors.length ? normalizedThemeColors.slice(0, 24) : [...fallback.themeColors]
+  if (!themeColors.includes(normalizedThemeColor)) {
+    themeColors.push(normalizedThemeColor)
+  }
+  return {
+    ...merged,
+    httpVersion: merged.httpVersion === 'HTTP/2' ? 'HTTP/2' : 'HTTP/1.1',
+    requestTimeout: Number(merged.requestTimeout || 0),
+    maxResponseSize: Number(merged.maxResponseSize || 0),
+    editorFontSize: Math.max(10, Number(merged.editorFontSize || 12)),
+    editorIndentCount: Math.max(1, Number(merged.editorIndentCount || 4)),
+    editorIndentType: merged.editorIndentType === 'tab' ? 'tab' : 'space',
+    themeColor: normalizedThemeColor,
+    themeMode: ['light', 'dark', 'system'].includes(merged.themeMode) ? merged.themeMode : 'system',
+    themeColors,
+    languageDetection: ['Auto', 'zh-CN', 'en-US'].includes(merged.languageDetection) ? merged.languageDetection : 'Auto',
+  }
+}
+
+function resolveLanguageDetection(value) {
+  if (value === 'zh-CN' || value === 'en-US') {
+    return value
+  }
+  return (navigator.language || 'zh-CN').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
+}
+
+function resolveThemeMode(value) {
+  if (value === 'light' || value === 'dark') {
+    return value
+  }
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function hexToRGBA(hexColor, alpha) {
+  const source = String(hexColor || '').trim().replace('#', '')
+  if (source.length !== 6) {
+    return `rgba(15, 108, 189, ${alpha})`
+  }
+  const r = Number.parseInt(source.slice(0, 2), 16)
+  const g = Number.parseInt(source.slice(2, 4), 16)
+  const b = Number.parseInt(source.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function buildBrandCSSVars(themeColor) {
+  const brand = normalizeHexColor(themeColor)
+  return {
+    '--brand': brand,
+    '--brand-soft': hexToRGBA(brand, 0.16),
+    '--brand-border': hexToRGBA(brand, 0.4),
+    '--brand-hover': shadeHexColor(brand, -0.08),
+    '--brand-pressed': shadeHexColor(brand, -0.16),
+    '--brand-subtle': hexToRGBA(brand, 0.1),
+    '--brand-contrast': '#ffffff',
+  }
+}
+
+function buildFluentTheme(mode, themeColor) {
+  const brand = normalizeHexColor(themeColor)
+  const base = mode === 'dark' ? webDarkTheme : webLightTheme
+  const theme = {
+    ...base,
+    colorBrandBackground: brand,
+    colorBrandBackgroundHover: shadeHexColor(brand, -0.08),
+    colorBrandBackgroundPressed: shadeHexColor(brand, -0.16),
+    colorBrandBackground2: hexToRGBA(brand, mode === 'dark' ? 0.28 : 0.18),
+    colorBrandBackgroundInverted: brand,
+    colorBrandForeground1: brand,
+    colorBrandForeground2: shadeHexColor(brand, -0.08),
+    colorBrandForegroundLink: brand,
+    colorBrandForegroundLinkHover: shadeHexColor(brand, -0.08),
+    colorBrandForegroundLinkPressed: shadeHexColor(brand, -0.16),
+    colorBrandStroke1: brand,
+    colorCompoundBrandBackground: brand,
+    colorCompoundBrandBackgroundHover: shadeHexColor(brand, -0.08),
+    colorCompoundBrandBackgroundPressed: shadeHexColor(brand, -0.16),
+    colorCompoundBrandStroke: brand,
+    colorCompoundBrandStrokeHover: shadeHexColor(brand, -0.08),
+    colorCompoundBrandStrokePressed: shadeHexColor(brand, -0.16),
+    colorCompoundBrandForeground1: '#ffffff',
+  }
+
+  if (mode === 'dark') {
+    theme.colorNeutralForeground1 = '#e2e8f0'
+    theme.colorNeutralForeground2 = '#cbd5e1'
+    theme.colorNeutralForeground3 = '#94a3b8'
+    theme.colorNeutralBackground1 = '#0f172a'
+    theme.colorNeutralBackground2 = '#111827'
+    theme.colorNeutralBackground3 = '#1f2937'
+    theme.colorNeutralBackground4 = '#334155'
+    theme.colorNeutralStroke1 = '#334155'
+  }
+
+  return theme
+}
+
+function normalizeHexColor(value) {
+  const source = String(value || '').trim()
+  if (!/^#[0-9a-fA-F]{6}$/.test(source)) {
+    return '#0f6cbd'
+  }
+  return source.toLowerCase()
+}
+
+function shadeHexColor(hexColor, ratio) {
+  const value = normalizeHexColor(hexColor)
+  const channels = [value.slice(1, 3), value.slice(3, 5), value.slice(5, 7)].map((item) => Number.parseInt(item, 16))
+  const shaded = channels.map((channel) => {
+    const target = ratio < 0 ? 0 : 255
+    const delta = Math.round((target - channel) * Math.abs(ratio))
+    return clampColor(channel + (ratio < 0 ? -delta : delta))
+  })
+  return `#${shaded.map((item) => item.toString(16).padStart(2, '0')).join('')}`
+}
+
+function clampColor(value) {
+  return Math.min(255, Math.max(0, value))
+}
+
+function resolveEditorTheme(themeMode) {
+  return resolveThemeMode(themeMode) === 'dark' ? 'vs-dark' : 'vs'
+}
+
+function buildEditorOptions(settings = {}) {
+  const tabSize = Math.max(1, Number(settings.editorIndentCount || 4))
+  return {
+    automaticLayout: true,
+    minimap: { enabled: false },
+    quickSuggestions: true,
+    suggestOnTriggerCharacters: true,
+    fixedOverflowWidgets: true,
+    scrollbar: { alwaysConsumeMouseWheel: false },
+    scrollBeyondLastLine: false,
+    fontFamily: settings.editorFontFamily || "IBMPlexMono, 'Courier New', monospace",
+    fontSize: Math.max(10, Number(settings.editorFontSize || 12)),
+    tabSize,
+    insertSpaces: settings.editorIndentType !== 'tab',
+  }
+}
+
+function shouldPromptSaveForTab(tab, collections = []) {
+  if (!tab) {
+    return false
+  }
+  if (tab.linkedNodeId) {
+    return isCollectionTabDirty(tab, collections)
+  }
+  return Boolean(tab.dirty)
 }
 
 function normalizeServerStore(store) {
@@ -4070,7 +4446,7 @@ function formatHistoryTitle(item, servers = [], collections = []) {
 
   if (item.mode === modes.http) {
     const method = request?.method || item.title?.split(' ')[0] || 'HTTP'
-    const url = request?.url || item.title || '未命名请求'
+    const url = stripLeadingHTTPMethod(request?.url || item.title || '未命名请求')
     return `${method} ${url}`
   }
 
@@ -4083,10 +4459,27 @@ function historyTitleAccent(item, servers = [], collections = []) {
   const request = extractHistoryRequest(item)
 
   if (item.mode === modes.http) {
-    return request?.method || item.title?.split(' ')[0] || ''
+    const method = String(request?.method || item.title?.split(' ')[0] || '').toUpperCase()
+    return httpMethods.includes(method) ? method : ''
   }
 
   return 'MCP'
+}
+
+function stripLeadingHTTPMethod(value) {
+  const text = String(value || '').trim()
+  if (!text) {
+    return text
+  }
+  const parts = text.split(/\s+/)
+  if (parts.length < 2) {
+    return text
+  }
+  const first = parts[0].toUpperCase()
+  if (!httpMethods.includes(first)) {
+    return text
+  }
+  return parts.slice(1).join(' ')
 }
 
 function buildCollectionRequestFromHistory(item, servers = []) {

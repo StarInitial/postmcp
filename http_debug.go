@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,12 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	if err := a.ensureDataDir(); err != nil {
 		return nil, err
 	}
+	settings, err := readSettingsStore(filepath.Join(a.dataDir, "settings.json"))
+	if err != nil {
+		return nil, err
+	}
+	req = applyHTTPSettings(req, settings)
+
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), normalizedTimeout(req.TimeoutMs))
 	defer cancel()
@@ -40,9 +47,18 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+	applyHTTPVersion(httpReq, settings.HTTPVersion)
 
 	for _, header := range enabledPairs(req.Headers) {
 		httpReq.Header.Set(header.Key, header.Value)
+	}
+	if settings.NoCacheHeader {
+		if httpReq.Header.Get("Cache-Control") == "" {
+			httpReq.Header.Set("Cache-Control", "no-cache")
+		}
+		if httpReq.Header.Get("Pragma") == "" {
+			httpReq.Header.Set("Pragma", "no-cache")
+		}
 	}
 	applyHTTPCookies(httpReq, resolvedURL, req.CookieScopes)
 	if contentType != "" && httpReq.Header.Get("Content-Type") == "" {
@@ -50,7 +66,7 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	}
 	applyHTTPAuth(httpReq, req.Auth)
 
-	client := &http.Client{Timeout: normalizedTimeout(req.TimeoutMs)}
+	client := buildHTTPClient(settings, normalizedTimeout(req.TimeoutMs))
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		result := &HttpResponse{
@@ -73,7 +89,7 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	body, readErr := io.ReadAll(resp.Body)
+	body, truncated, readErr := readHTTPResponseBody(resp.Body, settings.MaxResponseSize)
 	if readErr != nil {
 		return nil, fmt.Errorf("read response: %w", readErr)
 	}
@@ -88,6 +104,9 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 		ContentType: resp.Header.Get("Content-Type"),
 		RequestedAt: start.Format(time.RFC3339),
 		ResolvedURL: resp.Request.URL.String(),
+	}
+	if truncated {
+		result.Error = fmt.Sprintf("响应体超过配置上限 %d MB，已截断。", normalizeMaxResponseSize(settings.MaxResponseSize)/(1024*1024))
 	}
 
 	status := fmt.Sprintf("%d", resp.StatusCode)
@@ -301,6 +320,66 @@ func normalizedTimeout(timeoutMs int) time.Duration {
 		return 30 * time.Second
 	}
 	return time.Duration(timeoutMs) * time.Millisecond
+}
+
+func applyHTTPSettings(req HttpRequest, settings SettingsStore) HttpRequest {
+	if req.TimeoutMs <= 0 {
+		req.TimeoutMs = settings.RequestTimeout
+	}
+	if req.TimeoutMs <= 0 {
+		req.TimeoutMs = 30000
+	}
+	return req
+}
+
+func applyHTTPVersion(req *http.Request, version string) {
+	switch strings.TrimSpace(strings.ToUpper(version)) {
+	case "HTTP/2":
+		req.ProtoMajor = 2
+		req.ProtoMinor = 0
+		req.Proto = "HTTP/2.0"
+	default:
+		req.ProtoMajor = 1
+		req.ProtoMinor = 1
+		req.Proto = "HTTP/1.1"
+	}
+}
+
+func buildHTTPClient(settings SettingsStore, timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ForceAttemptHTTP2 = strings.TrimSpace(strings.ToUpper(settings.HTTPVersion)) == "HTTP/2"
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !settings.SSLVerification}
+
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
+	if !settings.FollowRedirects {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+	return client
+}
+
+func readHTTPResponseBody(body io.Reader, maxResponseSizeMB int) ([]byte, bool, error) {
+	maxBytes := normalizeMaxResponseSize(maxResponseSizeMB)
+	limited := io.LimitReader(body, int64(maxBytes+1))
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) <= maxBytes {
+		return data, false, nil
+	}
+	return data[:maxBytes], true, nil
+}
+
+func normalizeMaxResponseSize(maxResponseSizeMB int) int {
+	if maxResponseSizeMB <= 0 {
+		return 50 * 1024 * 1024
+	}
+	return maxResponseSizeMB * 1024 * 1024
 }
 
 func summarizeJSON(value any) string {

@@ -96,13 +96,31 @@ type MCPServerConfig struct {
 }
 
 type SettingsStore struct {
-	Version          int    `json:"version"`
-	UpdatedAt        string `json:"updatedAt"`
-	DefaultMode      string `json:"defaultMode"`
-	HTTPCodeLanguage string `json:"httpCodeLanguage"`
-	MCPCodeLanguage  string `json:"mcpCodeLanguage"`
-	HistoryLimit     int    `json:"historyLimit"`
-	SnippetCollapsed bool   `json:"snippetCollapsed"`
+	Version                  int      `json:"version"`
+	UpdatedAt                string   `json:"updatedAt"`
+	DefaultMode              string   `json:"defaultMode"`
+	HTTPCodeLanguage         string   `json:"httpCodeLanguage"`
+	MCPCodeLanguage          string   `json:"mcpCodeLanguage"`
+	HistoryLimit             int      `json:"historyLimit"`
+	SnippetCollapsed         bool     `json:"snippetCollapsed"`
+	HTTPVersion              string   `json:"httpVersion"`
+	RequestTimeout           int      `json:"requestTimeout"`
+	MaxResponseSize          int      `json:"maxResponseSize"`
+	NoCacheHeader            bool     `json:"noCacheHeader"`
+	RetainHeadersOnLinkClick bool     `json:"retainHeadersOnLinkClick"`
+	FollowRedirects          bool     `json:"followRedirects"`
+	ShowIconsWithTabs        bool     `json:"showIconsWithTabs"`
+	SSLVerification          bool     `json:"sslVerification"`
+	LanguageDetection        string   `json:"languageDetection"`
+	AlwaysOpenInNewTab       bool     `json:"alwaysOpenInNewTab"`
+	AskOnCloseUnsaved        bool     `json:"askOnCloseUnsaved"`
+	EditorFontFamily         string   `json:"editorFontFamily"`
+	EditorFontSize           int      `json:"editorFontSize"`
+	EditorIndentCount        int      `json:"editorIndentCount"`
+	EditorIndentType         string   `json:"editorIndentType"`
+	ThemeColor               string   `json:"themeColor"`
+	ThemeMode                string   `json:"themeMode"`
+	ThemeColors              []string `json:"themeColors"`
 }
 
 type HistoryStore struct {
@@ -376,11 +394,29 @@ func defaultHistoryStore() HistoryStore {
 
 func defaultSettingsStore() SettingsStore {
 	return SettingsStore{
-		Version:          currentSchemaVersion,
-		DefaultMode:      ModeHTTP,
-		HTTPCodeLanguage: "curl",
-		MCPCodeLanguage:  "json",
-		HistoryLimit:     500,
-		SnippetCollapsed: true,
+		Version:                  currentSchemaVersion,
+		DefaultMode:              ModeHTTP,
+		HTTPCodeLanguage:         "curl",
+		MCPCodeLanguage:          "json",
+		HistoryLimit:             500,
+		SnippetCollapsed:         true,
+		HTTPVersion:              "HTTP/1.1",
+		RequestTimeout:           30000,
+		MaxResponseSize:          50,
+		NoCacheHeader:            false,
+		RetainHeadersOnLinkClick: false,
+		FollowRedirects:          true,
+		ShowIconsWithTabs:        true,
+		SSLVerification:          false,
+		LanguageDetection:        "Auto",
+		AlwaysOpenInNewTab:       false,
+		AskOnCloseUnsaved:        false,
+		EditorFontFamily:         "IBMPlexMono, 'Courier New', monospace",
+		EditorFontSize:           12,
+		EditorIndentCount:        4,
+		EditorIndentType:         "space",
+		ThemeColor:               "#0f6cbd",
+		ThemeMode:                "system",
+		ThemeColors:              []string{"#0f6cbd", "#d13438", "#0078d4", "#107c10", "#ff8c00", "#8764b8"},
 	}
 }
