@@ -39,7 +39,14 @@ import {
   PopoverSurface,
   PopoverTrigger,
 } from '@fluentui/react-components'
-import Editor from '@monaco-editor/react'
+import 'monaco-editor/esm/nls.messages.zh-cn.js'
+import Editor, { loader } from '@monaco-editor/react'
+import * as monaco from 'monaco-editor'
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
+import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
+import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
+import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import {
   AddRegular,
   ArrowClockwiseRegular,
@@ -81,6 +88,34 @@ import {
 } from './lib/defaults'
 import { tryImportCurl } from './lib/curl'
 import { generateHttpSnippet, generateMcpSnippet } from './lib/snippets'
+
+window.MonacoEnvironment = {
+  ...(window.MonacoEnvironment || {}),
+  locale: 'zh-cn',
+  getWorker(_, label) {
+    const workerByLabel = {
+      json: jsonWorker,
+      css: cssWorker,
+      scss: cssWorker,
+      less: cssWorker,
+      html: htmlWorker,
+      handlebars: htmlWorker,
+      razor: htmlWorker,
+      typescript: tsWorker,
+      javascript: tsWorker,
+    }
+    const WorkerCtor = workerByLabel[label] || editorWorker
+    return new WorkerCtor()
+  },
+}
+
+loader.config({
+  monaco,
+})
+
+loader.init().catch((error) => {
+  console.error('[monaco] loader init failed', error)
+})
 
 const httpMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const httpEditorTabs = ['params', 'headers', 'auth', 'body']
@@ -197,8 +232,9 @@ function App() {
       try {
         const data = await invokeBackend('LoadBootstrapData')
         if (!cancelled) {
+          const normalizedData = normalizeBootstrap(data)
           setLoadError('')
-          setBootstrap(normalizeBootstrap(data))
+          setBootstrap(normalizedData)
           setBootstrapReady(true)
         }
       } catch (error) {
@@ -207,15 +243,29 @@ function App() {
           setBootstrapReady(false)
         }
       } finally {
+        window.clearTimeout(watchdog)
         if (!cancelled) {
           setLoading(false)
         }
       }
     }
 
+    const watchdog = window.setTimeout(() => {
+      if (cancelled) {
+        return
+      }
+      console.error('[bootstrap] timeout waiting LoadBootstrapData', {
+        hasBackend: hasBackend(),
+      })
+      reportFatalError('LoadBootstrapData 超时，请检查后端是否卡住。', '加载工作区失败')
+      setBootstrapReady(false)
+      setLoading(false)
+    }, 12000)
+
     bootstrapApp()
     return () => {
       cancelled = true
+      window.clearTimeout(watchdog)
     }
   }, [])
 
