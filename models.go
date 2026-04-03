@@ -30,7 +30,7 @@ type BootstrapData struct {
 	LoadedAt         string                `json:"loadedAt"`
 }
 
-const maxWorkspaceCount = 3
+const maxWorkspaceCount = 10
 
 type WorkspaceManagerStore struct {
 	Version               int                   `json:"version"`
