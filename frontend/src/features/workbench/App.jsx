@@ -184,6 +184,7 @@ function App() {
   const [expandedFolders, setExpandedFolders] = useState({})
   const [collectionSaveDialogOpen, setCollectionSaveDialogOpen] = useState(false)
   const [collectionSaveDraft, setCollectionSaveDraft] = useState({ name: '', folderId: collectionRootValue })
+  const [collectionFolderKeyword, setCollectionFolderKeyword] = useState('')
   const [collectionSaveSource, setCollectionSaveSource] = useState(null)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
@@ -669,6 +670,19 @@ function App() {
     })
   }, [currentTools, activeToolFilter])
   const toolComboboxValue = activeToolFilter || (selectedTool ? (selectedTool.title || selectedTool.name) : '')
+  const collectionFolderOptions = useMemo(
+    () => buildFolderOptions(bootstrap.collections.items),
+    [bootstrap.collections.items],
+  )
+  const collectionFolderKeywordNormalized = collectionFolderKeyword.trim().toLowerCase()
+  const filteredCollectionFolderOptions = useMemo(() => {
+    if (!collectionFolderKeywordNormalized) {
+      return collectionFolderOptions
+    }
+    return collectionFolderOptions.filter((folder) => folder.searchText.includes(collectionFolderKeywordNormalized))
+  }, [collectionFolderOptions, collectionFolderKeywordNormalized])
+  const rootFolderSearchText = '收藏集根目录 根目录 root'
+  const showCollectionRootOption = !collectionFolderKeywordNormalized || rootFolderSearchText.includes(collectionFolderKeywordNormalized)
 
   const currentSnippet = useMemo(() => {
     if (!activeTab) {
@@ -1822,6 +1836,7 @@ function App() {
       name: source.name,
       folderId: collectionRootValue,
     })
+    setCollectionFolderKeyword('')
     setCollectionSaveDialogOpen(true)
   }
 
@@ -1875,6 +1890,7 @@ function App() {
       persistFolderExpandedState(collectionSaveDraft.folderId, true)
     }
     setCollectionSaveDialogOpen(false)
+    setCollectionFolderKeyword('')
     setCollectionSaveSource(null)
     setStatusMessage(`已将 ${node.name} 保存到收藏集。`)
 
@@ -2840,7 +2856,7 @@ function App() {
                       </div>
                       <div className="editor-splitter" onPointerDown={startEditorSplitDrag} role="separator" aria-orientation="horizontal" aria-label="调整请求与响应区域高度" />
                       <div className="response-shell-host" style={responseBodyStyle}>
-                        <ResponsePanelMCP response={activeTab.lastMcp} />
+                        <ResponsePanelMCP response={activeTab.lastMcp} editorSettings={settingsForm} />
                         {isMcpRequestActive && (
                           <div className="response-loading-mask">
                             <Spinner size="medium" label="请求中" />
@@ -3800,6 +3816,7 @@ function App() {
       <Dialog open={collectionSaveDialogOpen} onOpenChange={(_, data) => {
         setCollectionSaveDialogOpen(data.open)
         if (!data.open) {
+          setCollectionFolderKeyword('')
           setCollectionSaveSource(null)
           collectionSaveAfterActionRef.current = null
         }
@@ -3813,12 +3830,35 @@ function App() {
                   <Input value={collectionSaveDraft.name} onChange={(_, data) => setCollectionSaveDraft((current) => ({ ...current, name: data.value }))} />
                 </Field>
                 <Field label="保存位置">
-                  <Dropdown selectedOptions={[collectionSaveDraft.folderId]} value={describeCollectionFolder(bootstrap.collections.items, collectionSaveDraft.folderId)} onOptionSelect={(_, data) => setCollectionSaveDraft((current) => ({ ...current, folderId: data.optionValue }))}>
-                    <Option value={collectionRootValue}>收藏集根目录</Option>
-                    {buildFolderOptions(bootstrap.collections.items).map((folder) => (
-                      <Option key={folder.id} value={folder.id}>{folder.label}</Option>
+                  <Combobox
+                    freeform
+                    selectedOptions={[]}
+                    value={collectionFolderKeyword}
+                    placeholder="输入关键字搜索目录"
+                    onChange={(event, data) => {
+                      const nextValue = data?.value ?? event?.target?.value ?? ''
+                      setCollectionFolderKeyword(nextValue)
+                    }}
+                    onOptionSelect={(_, data) => {
+                      const folderId = data.optionValue || collectionRootValue
+                      setCollectionSaveDraft((current) => ({ ...current, folderId }))
+                      const selectedFolder = collectionFolderOptions.find((folder) => folder.id === folderId)
+                      setCollectionFolderKeyword(selectedFolder ? selectedFolder.name : '收藏集根目录')
+                    }}
+                  >
+                    {showCollectionRootOption && (
+                      <Option value={collectionRootValue} text="收藏集根目录">收藏集根目录</Option>
+                    )}
+                    {filteredCollectionFolderOptions.map((folder) => (
+                      <Option key={folder.id} value={folder.id} text={folder.searchText}>
+                        {folder.label}
+                      </Option>
                     ))}
-                  </Dropdown>
+                    {!showCollectionRootOption && filteredCollectionFolderOptions.length === 0 && (
+                      <Option disabled value="__no_match__" text="无匹配目录">无匹配目录</Option>
+                    )}
+                  </Combobox>
+                  <Caption1>当前保存到：{describeCollectionFolder(collectionFolderOptions, collectionSaveDraft.folderId)}</Caption1>
                 </Field>
               </div>
             </DialogContent>
@@ -5221,17 +5261,78 @@ function McpResourceExplorer({ resources, onRead }) {
   )
 }
 
-function ResponsePanelMCP({ response }) {
+function ResponsePanelMCP({ response, editorSettings }) {
+  const [bodyViewMode, setBodyViewMode] = useState('text')
+  const formattedEditorRef = useRef(null)
+
+  const responseSignature = `${response?.requestedAt || ''}|${response?.toolName || ''}|${response?.isError ? '1' : '0'}|${response?.error || ''}|${response?.structuredContent || ''}`
+
+  useEffect(() => {
+    if (!response) {
+      return
+    }
+    setBodyViewMode('text')
+  }, [responseSignature])
+
   if (!response) {
     return (
       <div className="response-shell response-shell-mcp">
         <EmptyState
-          text="运行工具后，可在此查看非结构化内容、结构化 JSON 输出和执行元数据。"
+          text="运行工具后，可在此查看 Text、JSON、XML 三种响应视图和执行元数据。"
           icon={<StickerRegular />}
           fill
         />
       </div>
     )
+  }
+
+  const responseBodyText = buildMcpResponseText(response)
+  const jsonBodyText = buildMcpJSONBody(response, responseBodyText)
+  const xmlBodyText = buildMcpXMLBody(responseBodyText)
+  const activeBody = bodyViewMode === 'json'
+    ? jsonBodyText
+    : bodyViewMode === 'xml'
+      ? xmlBodyText
+      : responseBodyText
+
+  async function copyResponseBody() {
+    if (!activeBody) {
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(activeBody)
+    } catch {
+    }
+  }
+
+  function searchResponseBody() {
+    if ((bodyViewMode === 'json' || bodyViewMode === 'xml') && formattedEditorRef.current) {
+      formattedEditorRef.current.getAction('actions.find')?.run()
+      return
+    }
+    const keyword = window.prompt('输入要搜索的内容')
+    if (!keyword) {
+      return
+    }
+    window.find(keyword)
+  }
+
+  function saveResponseBodyToFile() {
+    const extension = bodyViewMode === 'json' ? 'json' : bodyViewMode === 'xml' ? 'xml' : 'txt'
+    const mimeType = bodyViewMode === 'json'
+      ? 'application/json;charset=utf-8'
+      : bodyViewMode === 'xml'
+        ? 'application/xml;charset=utf-8'
+        : 'text/plain;charset=utf-8'
+    const blob = new Blob([activeBody], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `mcp-response-${Date.now()}.${extension}`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -5244,14 +5345,113 @@ function ResponsePanelMCP({ response }) {
           <span>{response.toolName}</span>
         </div>
       </div>
-      <Field label="内容">
-        <Textarea resize="vertical" className="response-textarea" value={(response.content || []).map((item) => item.text || item.json).join('\n\n') || response.error || ''} readOnly />
-      </Field>
-      <Field label="结构化内容">
-        <Textarea resize="vertical" className="response-textarea" value={response.structuredContent || ''} readOnly />
-      </Field>
+
+      <div className="response-content">
+        <div className="response-body-panel">
+          <div className="response-body-toolbar">
+            <div className="response-body-toolbar-left">
+              <RadioGroup className="response-body-mode-group" layout="horizontal" value={bodyViewMode} onChange={(_, data) => setBodyViewMode(data.value)}>
+                <Radio value="text" label="Text" />
+                <Radio value="json" label="JSON" />
+                <Radio value="xml" label="XML" />
+              </RadioGroup>
+            </div>
+
+            <div className="response-body-toolbar-actions">
+              <Button appearance="subtle" icon={<CopyRegular />} title="复制" aria-label="复制响应体" onClick={copyResponseBody} />
+              <Button appearance="subtle" icon={<SearchRegular />} title="搜索" aria-label="搜索响应体" onClick={searchResponseBody} />
+              <Button appearance="subtle" icon={<SaveRegular />} title="保存为文件" aria-label="保存响应体为文件" onClick={saveResponseBodyToFile} />
+            </div>
+          </div>
+
+          {bodyViewMode === 'text' && (
+            <Textarea resize="none" className="response-textarea" value={responseBodyText} readOnly />
+          )}
+
+          {(bodyViewMode === 'json' || bodyViewMode === 'xml') && (
+            <div className="response-format-host">
+              <Editor
+                height="100%"
+                language={bodyViewMode === 'xml' ? 'xml' : 'json'}
+                theme={resolveEditorTheme(editorSettings?.themeMode)}
+                value={formatHttpBody(bodyViewMode === 'xml' ? xmlBodyText : jsonBodyText, bodyViewMode === 'xml' ? 'xml' : 'json')}
+                onMount={(editor) => {
+                  formattedEditorRef.current = editor
+                  disableMonacoFindTooltips(editor)
+                }}
+                options={{
+                  ...buildEditorOptions(editorSettings),
+                  readOnly: true,
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
+}
+
+function buildMcpResponseText(response) {
+  const content = Array.isArray(response?.content) ? response.content : []
+  const parts = content
+    .map((item) => {
+      if (item?.type === 'text') {
+        return String(item.text || '')
+      }
+      if (item?.text) {
+        return String(item.text)
+      }
+      if (item?.json) {
+        return String(item.json)
+      }
+      return ''
+    })
+    .filter(Boolean)
+
+  if (parts.length) {
+    return parts.join('\n\n')
+  }
+  if (response?.error) {
+    return String(response.error)
+  }
+  if (response?.structuredContent) {
+    return String(response.structuredContent)
+  }
+  return ''
+}
+
+function buildMcpJSONBody(response, fallbackText = '') {
+  const structured = String(response?.structuredContent || '').trim()
+  if (structured && structured !== 'null') {
+    return structured
+  }
+
+  const content = Array.isArray(response?.content) ? response.content : []
+  const jsonItems = content
+    .map((item) => String(item?.json || '').trim())
+    .filter(Boolean)
+
+  if (jsonItems.length === 1) {
+    return jsonItems[0]
+  }
+  if (jsonItems.length > 1) {
+    return `[\n${jsonItems.join(',\n')}\n]`
+  }
+
+  const text = String(fallbackText || '').trim()
+  if (text.startsWith('{') || text.startsWith('[')) {
+    return text
+  }
+
+  if (response?.error) {
+    return JSON.stringify({ error: response.error }, null, 2)
+  }
+  return text
+}
+
+function buildMcpXMLBody(text) {
+  return String(text || '')
 }
 
 function HistoryTitle({ item, servers, collections }) {
@@ -5981,26 +6181,36 @@ function collectFolderIds(nodes) {
   })
 }
 
-function buildFolderOptions(nodes, depth = 0) {
+function buildFolderOptions(nodes, parentNames = [], depth = 0) {
   return nodes.flatMap((node) => {
     if (node.type !== 'folder') {
       return []
     }
 
+    const nextParentNames = [...parentNames, node.name]
+    const pathLabel = `收藏集根目录 / ${nextParentNames.join(' / ')}`
+    const label = `${'  '.repeat(depth)}${node.name}`
+
     return [
-      { id: node.id, label: `${'  '.repeat(depth)}${node.name}` },
-      ...buildFolderOptions(node.children || [], depth + 1),
+      {
+        id: node.id,
+        name: node.name,
+        label,
+        pathLabel,
+        searchText: `${node.name} ${pathLabel}`.toLowerCase(),
+      },
+      ...buildFolderOptions(node.children || [], nextParentNames, depth + 1),
     ]
   })
 }
 
-function describeCollectionFolder(nodes, folderId) {
+function describeCollectionFolder(folders, folderId) {
   if (!folderId || folderId === collectionRootValue) {
     return '收藏集根目录'
   }
 
-  const node = findCollectionNode(nodes, folderId)
-  return node?.name || '收藏集根目录'
+  const folder = folders.find((item) => item.id === folderId)
+  return folder?.name || '收藏集根目录'
 }
 
 function findCollectionNode(nodes, nodeId) {
