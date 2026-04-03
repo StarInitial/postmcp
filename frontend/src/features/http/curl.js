@@ -1,4 +1,4 @@
-import { createDefaultHttpRequest, newCookieItem, newCookieScope, newPair } from './defaults'
+import { createDefaultHttpRequest, newCookieItem, newCookieScope, newPair } from '../workbench/lib/defaults'
 
 function tokenizeCurl(input) {
   const tokens = []

@@ -1,20 +1,17 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "Cherry-OpenAI": {
-      "npm": "@ai-sdk/openai",
-      "name": "Cherry-OpenAI",
+    "Cherry-Abyss-Router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cherry-Abyss-Router",
       "options": {
-        "apiKey": "{env:OPENCODE_API_KEY_OPENAI}",
-        "baseURL": "https://api.claudecode.net.cn/api/codex/backend-api/codex/v1"
+        "apiKey": "{env:OPENCODE_API_KEY_ABYSS_ROUTER}",
+        "baseURL": "https://llm.naura.com/router/api/open-ai/v1"
       },
       "models": {
-        "gpt-5.3-codex": {
-          "name": "gpt-5.3-codex",
-          "reasoning": true,
-          "options": {
-            "reasoningEffort": "medium"
-          }
+        "qwen/qwen3.5-397b-a17b": {
+          "name": "Qwen3.5 397B A17B",
+          "reasoning": true
         }
       }
     }

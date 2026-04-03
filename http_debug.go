@@ -23,7 +23,7 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	if err := a.ensureDataDir(); err != nil {
 		return nil, err
 	}
-	settings, err := readSettingsStore(filepath.Join(a.dataDir, "settings.json"))
+	settings, err := a.loadAppSettings()
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:     "Post MCP",
+		Title:     "PostMCP",
 		Width:     1480,
 		Height:    920,
 		MinWidth:  1280,

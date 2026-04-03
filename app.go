@@ -12,10 +12,16 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	dataDir  string
-	mcpMu    sync.Mutex
-	sessions map[string]*managedMCPSession
+	ctx             context.Context
+	dataDir         string
+	configRoot      string
+	legacyDataDir   string
+	runtimeDir      string
+	workspaceRoot   string
+	workspaceDBPath string
+	settingsPath    string
+	mcpMu           sync.Mutex
+	sessions        map[string]*managedMCPSession
 }
 
 func NewApp() *App {
@@ -39,77 +45,20 @@ func (a *App) ensureDataDir() error {
 	if a.dataDir != "" {
 		return nil
 	}
+	if err := a.ensureWorkspaceRuntime(); err != nil {
+		return err
+	}
 
-	configDir, err := os.UserConfigDir()
+	manager, err := a.loadWorkspaceManager()
 	if err != nil {
-		return fmt.Errorf("resolve user config dir: %w", err)
+		return err
 	}
-
-	a.dataDir = filepath.Join(configDir, "post-mcp", "data")
-	if err := os.MkdirAll(a.dataDir, 0o755); err != nil {
-		return fmt.Errorf("create app data dir: %w", err)
+	active := findWorkspaceByID(manager.Workspaces, manager.ActiveWorkspaceID)
+	if active == nil {
+		return fmt.Errorf("active workspace not found: %s", manager.ActiveWorkspaceID)
 	}
-
-	defaults := []struct {
-		name  string
-		value any
-	}{
-		{"workspace.json", defaultWorkspaceStore()},
-		{"settings.json", defaultSettingsStore()},
-	}
-
-	for _, file := range defaults {
-		path := filepath.Join(a.dataDir, file.name)
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			if err := writeJSONAtomic(path, file.value); err != nil {
-				return err
-			}
-		}
-	}
-
-	for _, dir := range []string{
-		filepath.Join(a.dataDir, "collections", "entities"),
-		filepath.Join(a.dataDir, "mcp"),
-		filepath.Join(a.dataDir, "history", "http"),
-		filepath.Join(a.dataDir, "history", "mcp"),
-	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create dir %s: %w", dir, err)
-		}
-	}
-
-	structuredDefaults := []struct {
-		path  string
-		value any
-	}{
-		{
-			path: filepath.Join(a.dataDir, "collections", "setting.json"),
-			value: collectionSettingsFile{
-				Version:     currentSchemaVersion,
-				RootOrder:   []string{},
-				ChildOrder:  map[string][]string{},
-				FolderNames: map[string]string{},
-				EntityFiles: map[string]string{},
-			},
-		},
-		{
-			path: filepath.Join(a.dataDir, "mcp", "setting.json"),
-			value: mcpSettingsFile{
-				Version:  currentSchemaVersion,
-				Order:    []string{},
-				FileByID: map[string]string{},
-			},
-		},
-	}
-	for _, item := range structuredDefaults {
-		if _, err := os.Stat(item.path); errors.Is(err, os.ErrNotExist) {
-			if err := writeJSONAtomic(item.path, item.value); err != nil {
-				return err
-			}
-		}
-	}
-
-	if err := a.migrateLegacyDataIfNeeded(); err != nil {
+	a.dataDir = active.Path
+	if err := ensureWorkspaceDataLayout(a.dataDir, *active); err != nil {
 		return err
 	}
 
@@ -178,10 +127,26 @@ func (a *App) migrateLegacyDataIfNeeded() error {
 	return nil
 }
 
+func (a *App) loadAppSettings() (SettingsStore, error) {
+	if err := a.ensureDataDir(); err != nil {
+		return SettingsStore{}, err
+	}
+	return readSettingsStore(a.settingsPath)
+}
+
 func (a *App) LoadBootstrapData() (*BootstrapData, error) {
 	if err := a.ensureDataDir(); err != nil {
 		return nil, err
 	}
+	manager, err := a.loadWorkspaceManager()
+	if err != nil {
+		return nil, err
+	}
+	activeWorkspace := findWorkspaceByID(manager.Workspaces, manager.ActiveWorkspaceID)
+	if activeWorkspace == nil {
+		return nil, fmt.Errorf("active workspace not found: %s", manager.ActiveWorkspaceID)
+	}
+	a.dataDir = activeWorkspace.Path
 
 	workspace, err := readWorkspaceStore(filepath.Join(a.dataDir, "workspace.json"))
 	if err != nil {
@@ -203,7 +168,7 @@ func (a *App) LoadBootstrapData() (*BootstrapData, error) {
 	if err != nil {
 		return nil, err
 	}
-	settings, err := readSettingsStore(filepath.Join(a.dataDir, "settings.json"))
+	settings, err := readSettingsStore(a.settingsPath)
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +181,10 @@ func (a *App) LoadBootstrapData() (*BootstrapData, error) {
 			HTTP: httpHistory,
 			MCP:  mcpHistory,
 		},
-		Settings: settings,
-		LoadedAt: time.Now().Format(time.RFC3339),
+		Settings:         settings,
+		WorkspaceManager: manager,
+		ActiveWorkspace:  *activeWorkspace,
+		LoadedAt:         time.Now().Format(time.RFC3339),
 	}, nil
 }
 
@@ -273,7 +240,7 @@ func (a *App) SaveSettings(store SettingsStore) error {
 	}
 	store.Version = currentSchemaVersion
 	store.UpdatedAt = time.Now().Format(time.RFC3339)
-	return writeJSONAtomic(filepath.Join(a.dataDir, "settings.json"), store)
+	return writeJSONAtomic(a.settingsPath, store)
 }
 
 func (a *App) LoadHistoryItem(mode string, historyID string) (*HistoryItem, error) {

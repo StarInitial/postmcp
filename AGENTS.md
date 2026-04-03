@@ -1,149 +1,147 @@
 # AGENTS.md
 
 ## Purpose
-- This repository is a Wails desktop application named `post-mcp`.
-- Backend code lives at the repo root in Go.
-- Frontend code lives in `frontend/` and uses React + Vite + Fluent UI.
-- Treat this file as the default operating guide for coding agents working in this repo.
+- This is a Wails desktop app (`post-mcp`) with a Go backend and React frontend.
+- This guide is for coding agents operating in this repository.
+- Follow repository conventions first, then this document.
 
-## Repo Snapshot
-- App bootstrap and window setup: `main.go`
-- App lifecycle and store loading/saving: `app.go`
-- HTTP debug flow: `http_debug.go`
-- MCP discovery, execution, prompts, resources: `mcp_debug.go`
-- Shared data models and defaults: `models.go`
-- JSON file helpers and atomic persistence: `store.go`
-- Main frontend shell: `frontend/src/App.jsx`
-- Frontend helpers: `frontend/src/lib/*.js`
+## Repository Layout
+- Backend entry: `main.go`
+- App lifecycle and bridge methods: `app.go`
+- Workspace management and Git integration: `workspace_manager.go`, `workspace_git.go`
+- HTTP execution flow: `http_debug.go`
+- MCP execution/discovery flow: `mcp_debug.go`
+- Data models/defaults: `models.go`
+- Persistent store I/O helpers: `store.go`
+- Frontend root: `frontend/src/App.jsx`
+- Frontend utilities: `frontend/src/lib/*.js`
 
 ## Tooling Source Of Truth
-- Go toolchain version is declared in `go.mod` as `go 1.25.0`.
-- Wails config is in `wails.json`.
-- Frontend package manager is `pnpm`.
-- Frontend scripts are defined in `frontend/package.json`.
+- Go version: `go 1.25.0` (`go.mod`)
+- Wails config: `wails.json`
+- Frontend package manager: `pnpm`
+- Frontend scripts: `frontend/package.json`
 
 ## Cursor / Copilot Rules
-- No repo-level Cursor rules were found in `.cursor/rules/`.
-- No `.cursorrules` file was found.
-- No Copilot instructions were found in `.github/copilot-instructions.md`.
-- Follow this `AGENTS.md` unless the user provides newer task-specific constraints.
+- Checked `.cursor/rules/`: no files found.
+- Checked `.cursorrules`: not present.
+- Checked `.github/copilot-instructions.md`: not present.
+- If any of these are added later, treat them as higher-priority instructions than this file.
 
-## Core Commands
-- Install frontend deps: `pnpm --dir frontend install`
-- Run frontend dev server only: `pnpm --dir frontend dev`
-- Build frontend only: `pnpm --dir frontend build`
+## Build / Run Commands
+- Install frontend dependencies: `pnpm --dir frontend install`
+- Run frontend dev server: `pnpm --dir frontend dev`
+- Build frontend: `pnpm --dir frontend build`
 - Preview frontend build: `pnpm --dir frontend preview`
-- Run Wails in dev mode: `wails dev`
-- Build the desktop app: `wails build`
-- Run all backend tests: `go test ./...`
+- Run Wails desktop in dev mode: `wails dev`
+- Build desktop application: `wails build`
+- Run backend tests: `go test ./...`
 
-## Single-Test Commands
-- Run a single backend test in the current package: `go test . -run TestName -count=1`
-- Run a single backend test across packages: `go test ./... -run TestName -count=1`
-- Run a single backend test with verbose output: `go test ./... -run TestName -v -count=1`
-- Run a single subtest: `go test ./... -run 'TestName/Subcase' -count=1`
-- There is currently no frontend test runner configured in `frontend/package.json`.
-- If frontend tests are added later, document the exact single-test command here.
+## Test Commands (Including Single Test)
+- Run all tests: `go test ./...`
+- Run tests for current package only: `go test .`
+- Run one named test in current package: `go test . -run TestName -count=1`
+- Run one named test across all packages: `go test ./... -run TestName -count=1`
+- Run one subtest: `go test ./... -run 'TestName/Subcase' -count=1`
+- Run one test with verbose logs: `go test ./... -run TestName -v -count=1`
+- Disable cache while iterating: keep `-count=1`
+- Race detection (optional, slower): `go test ./... -race`
+- Coverage snapshot (optional): `go test ./... -cover`
+- Current repo status: no committed `*_test.go` files yet.
 
 ## Lint / Format Reality
-- There is no dedicated lint script configured for Go or frontend code.
-- There is no ESLint, Prettier, or frontend formatter config checked in.
-- Use language-native formatting and existing file style instead of inventing new rules.
-- Format edited Go files with `gofmt -w <files>`.
-- Prefer `gofmt` for import cleanup; use `goimports` only if it is already available locally.
-- Preserve the formatting style already used in touched frontend files.
+- No dedicated lint script exists in root or frontend scripts.
+- No repo ESLint/Prettier config is checked in.
+- Required for Go edits: `gofmt -w <changed-go-files>`
+- Optional if available: `goimports -w <changed-go-files>` (do not require it)
+- Keep frontend formatting aligned with existing file style.
 
-## Required Validation
-- After every code change, run `wails build` from the repo root.
-- This is a repo-specific requirement and should be treated as mandatory.
-- If the task only touches frontend code, you may also run `pnpm --dir frontend build`, but do not skip `wails build`.
-- If `wails build` fails, report the failure clearly and include the relevant error summary.
-- Exception: if the user explicitly asks to skip builds because they are running `wails dev` with hot reload, do not run `wails build`.
-- In that exception mode, prefer quick iteration and report that validation was skipped by user request.
+## Validation Policy
+- Backend-only change: usually run `go test ./...`
+- Frontend-only change: usually run `pnpm --dir frontend build`
+- Cross-layer or release-sensitive change: run both, optionally `wails build`
+- Do not run expensive full builds for tiny edits unless needed.
+- If you skip validation, state what was skipped and why.
 
-## Build Notes
-- `wails build` already performs frontend install/build through `wails.json`.
-- Wails config currently uses:
+## Wails Build Notes
+- `wails.json` drives frontend tasks during desktop build.
 - `frontend:install = pnpm install`
 - `frontend:build = pnpm build`
 - `frontend:dev:watcher = pnpm dev`
-- Windows build output is `build/bin/post-mcp.exe`.
+- Windows artifact path: `build/bin/post-mcp.exe`
 
 ## Architecture Notes
-- App state is persisted as JSON files under the user config directory, not inside the repo.
-- Data directory setup happens in `App.ensureDataDir()`.
-- Bootstrap loading is centralized in `LoadBootstrapData()`.
-- Backend methods often return frontend-shaped view models rather than thin transport wrappers.
-- Frontend state is centralized in `frontend/src/App.jsx`.
-- Wails bindings are accessed through `window.go.main.App`, wrapped by `frontend/src/lib/backend.js`.
-- Collection, workspace, MCP server, history, and settings defaults must stay aligned across Go and frontend defaults.
+- App data is persisted in user config directories (not in repo workspace).
+- Multi-workspace runtime data is managed under `workspace-runtime`.
+- Legacy `data` directory is treated as migration source; do not rely on it for new writes.
+- Default workspace is intentionally read-only at management level.
+- Backend bridge methods are exposed on `window.go.main.App`.
+- Frontend calls backend via `frontend/src/lib/backend.js`.
 
-## Go Style Guidelines
-- Keep package name as `main`; this repo is a single desktop app, not a library.
-- Use tabs and standard `gofmt` layout.
-- Do not manually align code or imports.
-- Group imports as standard library first, blank line, then third-party packages.
-- Prefer small helper functions for parsing, normalization, persistence, and repeated branching.
-- Prefer explicit structs over loose maps except for dynamic MCP JSON payloads.
-- Use `any` only where schema-less or dynamic JSON truly requires it.
-- Keep functions focused and near related logic when practical.
+## Go Style Rules
+- Keep package as `main` (app binary project).
+- Always use `gofmt` formatting.
+- Import groups: standard library, blank line, third-party.
+- Prefer small helpers for parsing/mapping/persistence branches.
+- Prefer structs over `map[string]any` unless payload is truly schema-less.
+- Keep JSON struct tags in `lowerCamelCase` for frontend compatibility.
 
 ## Go Naming Conventions
-- Exported identifiers use PascalCase.
-- Unexported helpers use camelCase.
-- Preserve existing acronym casing: `ID`, `URL`, `URI`, `JSON`, `HTTP`, `MCP`.
-- Result structs should be operation-oriented, for example `MCPCallResult` or `MCPServerTestResult`.
-- Boolean names should read like flags or predicates, for example `disabled`, `busy`, `loading`, `isError`.
+- Exported names: `PascalCase`
+- Internal names: `camelCase`
+- Acronyms: use `ID`, `URL`, `URI`, `JSON`, `HTTP`, `MCP`
+- Operation result types should be intention-revealing (`WorkspacePushPreview`, `MCPCallResult`).
+- Booleans should read naturally (`isError`, `readOnly`, `gitEnabled`).
 
-## Go Error Handling
-- Return wrapped errors with context via `fmt.Errorf("context: %w", err)`.
-- Preserve low-level details instead of replacing them with vague messages.
-- Use result objects with `Error` fields only when that pattern already exists for the operation.
-- Follow existing soft-failure patterns in methods like `ExecuteHTTP`, `ExecuteMCPTool`, and `DiscoverMCPServer`.
-- Do not panic for normal runtime failures.
-- Ignore cleanup errors only where the codebase already treats them as best effort.
+## Go Error Handling Conventions
+- Wrap errors with context: `fmt.Errorf("context: %w", err)`
+- Return actionable messages for shell/Git failures.
+- Avoid panics in normal flows.
+- Respect existing “soft error in result object” patterns where already used.
+- Cleanup errors may be ignored only when explicitly best-effort.
 
 ## Go Persistence Conventions
-- Update `Version` and `UpdatedAt` before saving stores.
-- Use `writeJSONAtomic` for persistence instead of direct writes.
-- Use `read*Store` helpers so defaults remain intact when files are missing or partial.
-- Keep JSON struct tags in lower camelCase to match the frontend contract.
-- When adding shared fields, update both Go models and frontend default factories.
+- Before saving stores, set `Version` and `UpdatedAt`.
+- Use `writeJSONAtomic` for JSON persistence.
+- Use `read*Store` helpers to preserve defaulting/backward compatibility.
+- Keep backend defaults and frontend defaults synchronized when fields change.
+- For workspace metadata changes, update both manager store and workspace `setting.json`.
 
-## Frontend Style Guidelines
-- Use ES modules and React function components.
-- Keep import order consistent: React first, UI library imports next, local CSS, then local modules.
-- Keep one import block per module source.
-- Use single quotes and avoid semicolons, matching the existing codebase.
-- Prefer `const`; use `let` only when reassignment is required.
-- Component names use PascalCase; helpers, handlers, and setters use camelCase.
-- Reuse existing helpers such as `ensureTrailingBlankPair`, `parseJson`, and `prettyJson` before adding new utilities.
+## Frontend Style Rules
+- Use function components and hooks.
+- Match current style: single quotes, no semicolons.
+- Prefer `const`; use `let` only for reassignment.
+- Component names: `PascalCase`; handlers/helpers: `camelCase`.
+- Reuse existing utility helpers before adding new ones.
 
-## Frontend State And UI Conventions
-- `frontend/src/App.jsx` is intentionally large and state-heavy; avoid broad refactors unless requested.
-- Prefer updating tab state through existing helpers like `patchActiveTab`, `updateNested`, `setWorkspace`, and `setCollections`.
-- Follow Fluent UI primitives already in use instead of introducing another UI library.
-- Preserve Chinese UI copy unless the task explicitly asks for language changes.
-- Keep desktop-first layout behavior consistent with current Wails window sizing.
-- When adding dialogs, context menus, or transient UI state, follow the existing modal/state patterns already used in `App.jsx`.
+## Frontend UI / State Conventions
+- `frontend/src/App.jsx` is intentionally central/stateful; avoid broad rewrites.
+- Follow existing patterns for dialogs, toasts, context menus, and optimistic state.
+- Preserve existing Chinese product copy unless task asks to change language.
+- Keep desktop constraints in mind (Wails window, dense layouts).
+- For workspace UX, respect:
+  - default workspace cannot be edited/deleted,
+  - Git actions gated by Git integration toggle,
+  - workspace switch should refresh backend-backed bootstrap data.
 
 ## Frontend Error Handling
-- Surface backend bridge failures through UI state such as `statusMessage`, `loadError`, or a dialog.
-- Prefer guarded async flows with `try/catch/finally` when toggling loading or busy state.
-- Use `String(error?.message || error)` when matching the current frontend error-display pattern.
-- Do not swallow errors silently unless the code already treats the call as best effort persistence.
+- Backend calls should use `try/catch` with user-visible feedback.
+- Use existing message style: `String(error?.message || error)`.
+- Do not silently swallow failures unless explicitly non-critical.
+- Keep loading/busy flags consistent in async flows.
 
-## Editing Guidance
-- Make the smallest coherent change that fits the existing architecture.
-- Avoid broad refactors unless the user asks for them.
-- Do not add new dependencies unless clearly necessary.
-- Do not add comments unless a block is genuinely non-obvious.
-- Preserve ASCII unless a touched file already uses non-ASCII content; Chinese UI strings are already present and should remain as-is.
-- If you add new persisted fields, update normalization logic in the frontend and store/default logic in the backend.
+## Editing Rules For Agents
+- Make minimal, targeted changes.
+- Do not refactor unrelated areas unless requested.
+- Avoid adding dependencies unless necessary.
+- Add comments only for non-obvious logic.
+- Preserve ASCII by default unless file already uses Unicode text.
 
-## Before Finishing A Task
-- Re-read touched files for consistency with surrounding code.
-- Run `gofmt -w` on changed Go files.
-- Run `wails build` from the repo root.
-- Mention warnings, skipped validation, or missing test coverage in the final report.
-- If the user has explicitly enabled the `wails dev` hot-reload workflow and asked to skip builds, do not run `wails build`; mention this in the final report.
+## Pre-Handoff Checklist
+- Re-read changed files for consistency.
+- Run `gofmt -w` on touched Go files.
+- Run appropriate validation commands for the change scope.
+- Summarize:
+  - what changed,
+  - what was validated,
+  - what remains unvalidated or risky.

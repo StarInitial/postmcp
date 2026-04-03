@@ -1,6 +1,10 @@
 package main
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 const currentSchemaVersion = 1
 
@@ -16,12 +20,129 @@ const (
 )
 
 type BootstrapData struct {
-	Workspace   WorkspaceStore       `json:"workspace"`
-	Collections CollectionStore      `json:"collections"`
-	MCPServers  MCPServerStore       `json:"mcpServers"`
-	History     CombinedHistoryStore `json:"history"`
-	Settings    SettingsStore        `json:"settings"`
-	LoadedAt    string               `json:"loadedAt"`
+	Workspace        WorkspaceStore        `json:"workspace"`
+	Collections      CollectionStore       `json:"collections"`
+	MCPServers       MCPServerStore        `json:"mcpServers"`
+	History          CombinedHistoryStore  `json:"history"`
+	Settings         SettingsStore         `json:"settings"`
+	WorkspaceManager WorkspaceManagerStore `json:"workspaceManager"`
+	ActiveWorkspace  WorkspaceDescriptor   `json:"activeWorkspace"`
+	LoadedAt         string                `json:"loadedAt"`
+}
+
+const maxWorkspaceCount = 3
+
+type WorkspaceManagerStore struct {
+	Version               int                   `json:"version"`
+	UpdatedAt             string                `json:"updatedAt"`
+	MaxWorkspaceCount     int                   `json:"maxWorkspaceCount"`
+	MultiWorkspaceEnabled bool                  `json:"multiWorkspaceEnabled"`
+	GitEnabled            bool                  `json:"gitEnabled"`
+	ActiveWorkspaceID     string                `json:"activeWorkspaceId"`
+	Workspaces            []WorkspaceDescriptor `json:"workspaces"`
+}
+
+type WorkspaceDescriptor struct {
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Path                string `json:"path"`
+	Creator             string `json:"creator"`
+	GitURL              string `json:"gitUrl"`
+	GitBranch           string `json:"gitBranch"`
+	IncludeHistoryInGit bool   `json:"includeHistoryInGit"`
+	ReadOnly            bool   `json:"readOnly"`
+	CreatedAt           string `json:"createdAt"`
+	UpdatedAt           string `json:"updatedAt"`
+	LastOpenedAt        string `json:"lastOpenedAt"`
+}
+
+type WorkspaceNamespaceSettings struct {
+	Version             int    `json:"version"`
+	UpdatedAt           string `json:"updatedAt"`
+	WorkspaceID         string `json:"workspaceId"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Creator             string `json:"creator"`
+	GitURL              string `json:"gitUrl"`
+	GitBranch           string `json:"gitBranch"`
+	IncludeHistoryInGit bool   `json:"includeHistoryInGit"`
+}
+
+type WorkspaceCreateRequest struct {
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Creator             string `json:"creator"`
+	Path                string `json:"path"`
+	Mode                string `json:"mode"`
+	ImportSource        string `json:"importSource"`
+	GitURL              string `json:"gitUrl"`
+	GitBranch           string `json:"gitBranch"`
+	IncludeHistoryInGit bool   `json:"includeHistoryInGit"`
+}
+
+type WorkspaceUpdateRequest struct {
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Description         string `json:"description"`
+	Creator             string `json:"creator"`
+	GitURL              string `json:"gitUrl"`
+	GitBranch           string `json:"gitBranch"`
+	IncludeHistoryInGit bool   `json:"includeHistoryInGit"`
+}
+
+type WorkspaceDeleteRequest struct {
+	ID               string `json:"id"`
+	DeleteLocalFiles bool   `json:"deleteLocalFiles"`
+}
+
+type WorkspaceDeleteResult struct {
+	Manager         WorkspaceManagerStore `json:"manager"`
+	FileDeleteError string                `json:"fileDeleteError,omitempty"`
+}
+
+type WorkspaceFeatureSettingsRequest struct {
+	MultiWorkspaceEnabled bool `json:"multiWorkspaceEnabled"`
+	GitEnabled            bool `json:"gitEnabled"`
+}
+
+type WorkspaceGitCheckResult struct {
+	Available bool   `json:"available"`
+	Version   string `json:"version"`
+	Error     string `json:"error,omitempty"`
+}
+
+type WorkspaceGitDetectionResult struct {
+	GitURL    string `json:"gitUrl"`
+	GitBranch string `json:"gitBranch"`
+}
+
+type WorkspaceGitResourceChange struct {
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+	Resource string `json:"resource"`
+	Selected bool   `json:"selected"`
+}
+
+type WorkspacePushPreview struct {
+	WorkspaceID string                       `json:"workspaceId"`
+	Changes     []WorkspaceGitResourceChange `json:"changes"`
+	Branch      string                       `json:"branch"`
+	Remote      string                       `json:"remote"`
+}
+
+type WorkspacePushRequest struct {
+	WorkspaceID string   `json:"workspaceId"`
+	Branch      string   `json:"branch"`
+	Message     string   `json:"message"`
+	Paths       []string `json:"paths"`
+}
+
+type WorkspaceGitActionResult struct {
+	WorkspaceID string `json:"workspaceId"`
+	Branch      string `json:"branch"`
+	Summary     string `json:"summary"`
+	Error       string `json:"error,omitempty"`
 }
 
 type CombinedHistoryStore struct {
@@ -96,31 +217,32 @@ type MCPServerConfig struct {
 }
 
 type SettingsStore struct {
-	Version                  int      `json:"version"`
-	UpdatedAt                string   `json:"updatedAt"`
-	DefaultMode              string   `json:"defaultMode"`
-	HTTPCodeLanguage         string   `json:"httpCodeLanguage"`
-	MCPCodeLanguage          string   `json:"mcpCodeLanguage"`
-	HistoryLimit             int      `json:"historyLimit"`
-	SnippetCollapsed         bool     `json:"snippetCollapsed"`
-	HTTPVersion              string   `json:"httpVersion"`
-	RequestTimeout           int      `json:"requestTimeout"`
-	MaxResponseSize          int      `json:"maxResponseSize"`
-	NoCacheHeader            bool     `json:"noCacheHeader"`
-	RetainHeadersOnLinkClick bool     `json:"retainHeadersOnLinkClick"`
-	FollowRedirects          bool     `json:"followRedirects"`
-	ShowIconsWithTabs        bool     `json:"showIconsWithTabs"`
-	SSLVerification          bool     `json:"sslVerification"`
-	LanguageDetection        string   `json:"languageDetection"`
-	AlwaysOpenInNewTab       bool     `json:"alwaysOpenInNewTab"`
-	AskOnCloseUnsaved        bool     `json:"askOnCloseUnsaved"`
-	EditorFontFamily         string   `json:"editorFontFamily"`
-	EditorFontSize           int      `json:"editorFontSize"`
-	EditorIndentCount        int      `json:"editorIndentCount"`
-	EditorIndentType         string   `json:"editorIndentType"`
-	ThemeColor               string   `json:"themeColor"`
-	ThemeMode                string   `json:"themeMode"`
-	ThemeColors              []string `json:"themeColors"`
+	Version                  int                        `json:"version"`
+	UpdatedAt                string                     `json:"updatedAt"`
+	DefaultMode              string                     `json:"defaultMode"`
+	HTTPCodeLanguage         string                     `json:"httpCodeLanguage"`
+	MCPCodeLanguage          string                     `json:"mcpCodeLanguage"`
+	HistoryLimit             int                        `json:"historyLimit"`
+	SnippetCollapsed         bool                       `json:"snippetCollapsed"`
+	HTTPVersion              string                     `json:"httpVersion"`
+	RequestTimeout           int                        `json:"requestTimeout"`
+	MaxResponseSize          int                        `json:"maxResponseSize"`
+	NoCacheHeader            bool                       `json:"noCacheHeader"`
+	RetainHeadersOnLinkClick bool                       `json:"retainHeadersOnLinkClick"`
+	FollowRedirects          bool                       `json:"followRedirects"`
+	ShowIconsWithTabs        bool                       `json:"showIconsWithTabs"`
+	SSLVerification          bool                       `json:"sslVerification"`
+	LanguageDetection        string                     `json:"languageDetection"`
+	AlwaysOpenInNewTab       bool                       `json:"alwaysOpenInNewTab"`
+	AskOnCloseUnsaved        bool                       `json:"askOnCloseUnsaved"`
+	EditorFontFamily         string                     `json:"editorFontFamily"`
+	EditorFontSize           int                        `json:"editorFontSize"`
+	EditorIndentCount        int                        `json:"editorIndentCount"`
+	EditorIndentType         string                     `json:"editorIndentType"`
+	ThemeColor               string                     `json:"themeColor"`
+	ThemeMode                string                     `json:"themeMode"`
+	ThemeColors              []string                   `json:"themeColors"`
+	CollectionFolderExpanded map[string]map[string]bool `json:"collectionFolderExpanded"`
 }
 
 type HistoryStore struct {
@@ -357,7 +479,7 @@ func defaultWorkspaceStore() WorkspaceStore {
 func defaultWorkspaceTab() WorkspaceTab {
 	return WorkspaceTab{
 		ID:    uuid.NewString(),
-		Title: "New HTTP Request",
+		Title: "新建 HTTP 请求",
 		Mode:  ModeHTTP,
 		HTTP: HttpRequest{
 			Method:       "GET",
@@ -418,5 +540,45 @@ func defaultSettingsStore() SettingsStore {
 		ThemeColor:               "#0f6cbd",
 		ThemeMode:                "system",
 		ThemeColors:              []string{"#0f6cbd", "#d13438", "#0078d4", "#107c10", "#ff8c00", "#8764b8"},
+		CollectionFolderExpanded: map[string]map[string]bool{},
 	}
+}
+
+func defaultWorkspaceManagerStore() WorkspaceManagerStore {
+	now := timeNowRFC3339()
+	defaultWorkspace := WorkspaceDescriptor{
+		ID:                  "default",
+		Name:                "默认",
+		Description:         "系统默认工作空间",
+		GitBranch:           "main",
+		IncludeHistoryInGit: false,
+		ReadOnly:            true,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		LastOpenedAt:        now,
+	}
+	return WorkspaceManagerStore{
+		Version:               currentSchemaVersion,
+		UpdatedAt:             now,
+		MaxWorkspaceCount:     maxWorkspaceCount,
+		MultiWorkspaceEnabled: false,
+		GitEnabled:            false,
+		ActiveWorkspaceID:     defaultWorkspace.ID,
+		Workspaces:            []WorkspaceDescriptor{defaultWorkspace},
+	}
+}
+
+func defaultWorkspaceNamespaceSettings() WorkspaceNamespaceSettings {
+	return WorkspaceNamespaceSettings{
+		Version:             currentSchemaVersion,
+		UpdatedAt:           timeNowRFC3339(),
+		Name:                "默认",
+		Description:         "系统默认工作空间",
+		GitBranch:           "main",
+		IncludeHistoryInGit: false,
+	}
+}
+
+func timeNowRFC3339() string {
+	return time.Now().Format(time.RFC3339)
 }

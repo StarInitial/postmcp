@@ -634,7 +634,7 @@ func (a *App) appendHistory(mode string, item HistoryItem) {
 	if a.dataDir == "" {
 		return
 	}
-	settings, err := readSettingsStore(filepath.Join(a.dataDir, "settings.json"))
+	settings, err := a.loadAppSettings()
 	limit := 500
 	if err == nil && settings.HistoryLimit > 0 {
 		limit = settings.HistoryLimit

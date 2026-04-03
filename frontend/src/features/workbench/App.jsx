@@ -8,6 +8,7 @@ import {
   Body1,
   Button,
   Caption1,
+  Checkbox,
   Combobox,
   Dialog,
   DialogActions,
@@ -38,6 +39,8 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  Tooltip,
+  Label,
 } from '@fluentui/react-components'
 import 'monaco-editor/esm/nls.messages.zh-cn.js'
 import Editor, { loader } from '@monaco-editor/react'
@@ -50,10 +53,13 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import {
   AddRegular,
   ArrowClockwiseRegular,
+  CheckmarkCircleRegular,
   CopyRegular,
   ArrowDownloadRegular,
+  ArrowUpRegular,
   ChevronLeftRegular,
   ChevronRightRegular,
+  ChevronDownRegular,
   CodeRegular,
   DeleteRegular,
   DocumentRegular,
@@ -68,15 +74,22 @@ import {
   StickerRegular,
   DismissRegular,
   CheckRegular,
+  WrenchRegular,
+  StorageRegular,
+  ArrowLeftRegular,
 } from '@fluentui/react-icons'
 import './App.css'
-import { hasBackend, invokeBackend } from './lib/backend'
+import EmptyState from '../../components/EmptyState'
+import KeyValueEditor from '../../components/KeyValueEditor'
+import { hasBackend, invokeBackend } from '../../services/backend'
 import {
   createCollectionFolder,
   createCollectionRequest,
   createDefaultBootstrap,
   createServerDraft,
   createWorkspaceTab,
+  createWorkspaceSlot,
+  getDefaultWorkspaceSlots,
   modes,
   newFormDataPair,
   newCookieItem,
@@ -86,8 +99,13 @@ import {
   prettyJson,
   transports,
 } from './lib/defaults'
-import { tryImportCurl } from './lib/curl'
-import { generateHttpSnippet, generateMcpSnippet } from './lib/snippets'
+import { tryImportCurl } from '../http/curl'
+import { generateHttpSnippet, generateMcpSnippet } from '../snippets/snippets'
+
+const DIALOG_RESET_DELAY = 180
+const OPERATION_SUCCESS_DELAY = 1200
+const BOOTSTRAP_TIMEOUT = 12000
+const AUTO_SAVE_DELAY = 450
 
 window.MonacoEnvironment = {
   ...(window.MonacoEnvironment || {}),
@@ -156,9 +174,12 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
+  const [modalNoticeDialog, setModalNoticeDialog] = useState({ open: false, title: '', message: '' })
   const [loadError, setLoadError] = useState('')
   const [bootstrapReady, setBootstrapReady] = useState(false)
   const [fatalErrorDialog, setFatalErrorDialog] = useState('')
+  const [workspaceSlots, setWorkspaceSlots] = useState(getDefaultWorkspaceSlots())
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(workspaceSlots[0]?.id || '')
   const [sidebarTab, setSidebarTab] = useState('collections')
   const [expandedFolders, setExpandedFolders] = useState({})
   const [collectionSaveDialogOpen, setCollectionSaveDialogOpen] = useState(false)
@@ -167,6 +188,7 @@ function App() {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
   const [renameTarget, setRenameTarget] = useState(null)
+  const [inlineRenameFolder, setInlineRenameFolder] = useState({ id: '', draft: '' })
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [collectionContextMenu, setCollectionContextMenu] = useState(null)
@@ -189,11 +211,50 @@ function App() {
   const [resourceReader, setResourceReader] = useState(null)
   const [serverStatuses, setServerStatuses] = useState({})
   const [serverRefreshError, setServerRefreshError] = useState(null)
+  const [serverRefreshErrorOpen, setServerRefreshErrorOpen] = useState(false)
   const [historyContextMenu, setHistoryContextMenu] = useState(null)
   const [historyDeleteDialog, setHistoryDeleteDialog] = useState(null)
   const [toolFilterByTab, setToolFilterByTab] = useState({})
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState('general')
+  const [workspaceEnabled, setWorkspaceEnabled] = useState(false)
+  const [gitEnabled, setGitEnabled] = useState(false)
+  const [workspaceTableSearch, setWorkspaceTableSearch] = useState('')
+  const [workspaceTablePage, setWorkspaceTablePage] = useState(1)
+  const [workspaceEditDialogOpen, setWorkspaceEditDialogOpen] = useState(false)
+  const [workspaceEditErrors, setWorkspaceEditErrors] = useState({ path: '', gitUrl: '', gitBranch: '' })
+  const [workspaceEditDraft, setWorkspaceEditDraft] = useState({
+    id: '',
+    name: '',
+    description: '',
+    creator: '',
+    path: '',
+    mode: 'create',
+    importSource: 'local',
+    gitUrl: '',
+    gitBranch: '',
+    includeHistoryInGit: false,
+    isNew: false,
+  })
+  const [mockWorkspaces, setMockWorkspaces] = useState([])
+  const [workspaceDeleteDialogOpen, setWorkspaceDeleteDialogOpen] = useState(false)
+  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState(null)
+  const [deleteWorkspaceLocalFiles, setDeleteWorkspaceLocalFiles] = useState(false)
+  const [workspaceLimitDialogOpen, setWorkspaceLimitDialogOpen] = useState(false)
+  const [workspaceLimitMessage, setWorkspaceLimitMessage] = useState('您的工作空间使用量已满。')
+  const [workspaceImporting, setWorkspaceImporting] = useState(false)
+  const [workspaceImportResultDialog, setWorkspaceImportResultDialog] = useState({
+    open: false,
+    title: '',
+    message: '',
+  })
+  const [gitCheck, setGitCheck] = useState({ available: false, version: '', error: '' })
+  const [pushDialogOpen, setPushDialogOpen] = useState(false)
+  const [pushPreview, setPushPreview] = useState({ workspaceId: '', branch: 'main', remote: '', changes: [] })
+  const [pushNote, setPushNote] = useState('')
+  const [pushPreviewLoadingWorkspaceId, setPushPreviewLoadingWorkspaceId] = useState('')
+  const [pushingWorkspaceId, setPushingWorkspaceId] = useState('')
+  const [lastPushedWorkspaceId, setLastPushedWorkspaceId] = useState('')
   const [closeConfirmDialog, setCloseConfirmDialog] = useState({ open: false, message: '', canSaveAndClose: false })
   const [themeColorContextMenu, setThemeColorContextMenu] = useState(null)
   const [themeColorDraft, setThemeColorDraft] = useState('#0f6cbd')
@@ -202,6 +263,13 @@ function App() {
     [modes.mcp]: 0.56,
   })
   const [editorResizing, setEditorResizing] = useState(false)
+  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false)
+  const [workspaceSearch, setWorkspaceSearch] = useState('')
+  const [workspaceOperationState, setWorkspaceOperationState] = useState({
+    updatingId: null,
+    updatedId: null,
+  })
+  const [workspaceSwitchingId, setWorkspaceSwitchingId] = useState('')
   const requestEditorRef = useRef(null)
   const tabsContainerRef = useRef(null)
   const activeRequestRef = useRef(null)
@@ -209,14 +277,93 @@ function App() {
   const closeConfirmSaveActionRef = useRef(null)
   const collectionSaveAfterActionRef = useRef(null)
   const splitDragRef = useRef(null)
+  const statusMessageChangedAtRef = useRef(0)
+  const modalActivatedAtRef = useRef(0)
+  const dialogResetTimersRef = useRef({})
   const [activeRequest, setActiveRequest] = useState(null)
+
+  function useDialogReset(dialogName, isOpen) {
+    useEffect(() => {
+      if (isOpen) {
+        if (dialogResetTimersRef.current[dialogName]) {
+          clearTimeout(dialogResetTimersRef.current[dialogName])
+          delete dialogResetTimersRef.current[dialogName]
+        }
+        return
+      }
+
+      if (!dialogResetTimersRef.current[dialogName]) {
+        dialogResetTimersRef.current[dialogName] = setTimeout(() => {
+          delete dialogResetTimersRef.current[dialogName]
+        }, DIALOG_RESET_DELAY)
+      }
+
+      return () => {
+        if (dialogResetTimersRef.current[dialogName]) {
+          clearTimeout(dialogResetTimersRef.current[dialogName])
+          delete dialogResetTimersRef.current[dialogName]
+        }
+      }
+    }, [dialogName, isOpen])
+
+    return Boolean(dialogResetTimersRef.current[dialogName])
+  }
 
   function reportFatalError(error, title = '严重错误') {
     const message = String(error?.message || error)
     const text = `${title}: ${message}`
     setLoadError(text)
     setFatalErrorDialog(text)
-    setStatusMessage(text)
+  }
+
+  function isWorkspaceUpdating(workspaceId) {
+    return workspaceOperationState.updatingId === workspaceId
+  }
+
+  function isWorkspaceUpdated(workspaceId) {
+    return workspaceOperationState.updatedId === workspaceId
+  }
+
+  function setWorkspaceUpdating(workspaceId) {
+    setWorkspaceOperationState({ updatingId: workspaceId, updatedId: null })
+  }
+
+  function setWorkspaceUpdated(workspaceId) {
+    setWorkspaceOperationState({ updatingId: null, updatedId: workspaceId })
+    setTimeout(() => {
+      setWorkspaceOperationState({ updatingId: null, updatedId: null })
+    }, OPERATION_SUCCESS_DELAY)
+  }
+
+  function setWorkspaceOperationError() {
+    setWorkspaceOperationState({ updatingId: null, updatedId: null })
+  }
+
+  function buildExpandedFoldersState(nextBootstrap, preferredWorkspaceId = '') {
+    const workspaceId = preferredWorkspaceId
+      || nextBootstrap.workspaceManager?.activeWorkspaceId
+      || nextBootstrap.activeWorkspace?.id
+      || activeWorkspaceId
+      || 'default'
+    const folderIds = collectFolderIds(nextBootstrap.collections.items)
+    const persisted = nextBootstrap.settings?.collectionFolderExpanded?.[workspaceId] || {}
+    const nextExpanded = {}
+    folderIds.forEach((id) => {
+      nextExpanded[id] = Boolean(persisted[id])
+    })
+    return nextExpanded
+  }
+
+  function syncWorkspaceManagerState(nextBootstrap, preferredWorkspaceId = '') {
+    const manager = nextBootstrap.workspaceManager || {}
+    const workspaces = manager.workspaces || []
+    const nextActiveWorkspaceId = preferredWorkspaceId || manager.activeWorkspaceId || workspaces[0]?.id || ''
+    setWorkspaceSlots(workspaces)
+    setMockWorkspaces(workspaces)
+    setActiveWorkspaceId(nextActiveWorkspaceId)
+    setWorkspaceEnabled(Boolean(manager.multiWorkspaceEnabled))
+    setGitEnabled(Boolean(manager.gitEnabled))
+    return nextActiveWorkspaceId
   }
 
   useEffect(() => {
@@ -233,8 +380,10 @@ function App() {
         const data = await invokeBackend('LoadBootstrapData')
         if (!cancelled) {
           const normalizedData = normalizeBootstrap(data)
+          const nextActiveWorkspaceId = syncWorkspaceManagerState(normalizedData)
           setLoadError('')
           setBootstrap(normalizedData)
+          setExpandedFolders(buildExpandedFoldersState(normalizedData, nextActiveWorkspaceId))
           setBootstrapReady(true)
         }
       } catch (error) {
@@ -260,7 +409,7 @@ function App() {
       reportFatalError('LoadBootstrapData 超时，请检查后端是否卡住。', '加载工作区失败')
       setBootstrapReady(false)
       setLoading(false)
-    }, 12000)
+    }, BOOTSTRAP_TIMEOUT)
 
     bootstrapApp()
     return () => {
@@ -283,21 +432,36 @@ function App() {
       ]).catch((error) => {
         reportFatalError(error, '自动保存失败')
       })
-    }, 450)
+    }, AUTO_SAVE_DELAY)
 
     return () => clearTimeout(timer)
   }, [bootstrap, loading, bootstrapReady, loadError])
 
   useEffect(() => {
     const folderIds = collectFolderIds(bootstrap.collections.items)
-    setExpandedFolders((previous) => {
+    const workspaceId = activeWorkspaceId || bootstrap.activeWorkspace?.id || 'default'
+    const persisted = bootstrap.settings?.collectionFolderExpanded?.[workspaceId] || {}
+    setExpandedFolders(() => {
       const next = {}
       folderIds.forEach((id) => {
-        next[id] = previous[id] ?? true
+        next[id] = Boolean(persisted[id])
       })
       return next
     })
-  }, [bootstrap.collections.items])
+  }, [bootstrap.collections.items, bootstrap.settings?.collectionFolderExpanded, activeWorkspaceId, bootstrap.activeWorkspace?.id])
+
+  useEffect(() => {
+    syncWorkspaceManagerState(bootstrap)
+  }, [bootstrap.workspaceManager])
+
+  useEffect(() => {
+    if (!hasBackend()) {
+      return
+    }
+    invokeBackend('CheckGitAvailable')
+      .then((result) => setGitCheck(result || { available: false, version: '', error: '' }))
+      .catch((error) => setGitCheck({ available: false, version: '', error: String(error?.message || error) }))
+  }, [])
 
   const activeTab = useMemo(
     () => bootstrap.workspace.tabs.find((tab) => tab.id === bootstrap.workspace.activeTabId) || bootstrap.workspace.tabs[0],
@@ -325,6 +489,8 @@ function App() {
   )
   const isHttpRequestActive = activeRequest?.kind === 'http' && activeRequest?.tabID === activeTab?.id
   const isMcpRequestActive = activeRequest?.kind === 'mcp' && activeRequest?.tabID === activeTab?.id
+  const workspaceMaxCount = Math.max(1, Number(bootstrap.workspaceManager?.maxWorkspaceCount) || 3)
+  const workspaceUsagePercent = Math.min(100, (mockWorkspaces.length / workspaceMaxCount) * 100)
 
   useEffect(() => {
     const container = tabsContainerRef.current
@@ -567,6 +733,282 @@ function App() {
     }))
   }
 
+  async function handleWorkspaceUpdate(workspaceId) {
+    if (!hasBackend()) {
+      return
+    }
+    setWorkspaceUpdating(workspaceId)
+    try {
+      const result = await invokeBackend('PullWorkspace', workspaceId)
+      if (workspaceId === activeWorkspaceId) {
+        setWorkspaceSwitchingId(workspaceId)
+        const next = await invokeBackend('SwitchWorkspace', workspaceId)
+        const normalized = normalizeBootstrap(next)
+        const nextActiveWorkspaceId = syncWorkspaceManagerState(normalized, workspaceId)
+        setBootstrap(normalized)
+        setExpandedFolders(buildExpandedFoldersState(normalized, nextActiveWorkspaceId))
+      }
+      setWorkspaceUpdated(workspaceId)
+    } catch (error) {
+      setWorkspaceOperationError()
+      setStatusMessage(`更新失败：${String(error?.message || error)}`)
+    } finally {
+      setWorkspaceSwitchingId('')
+    }
+  }
+
+  const modalActive = Boolean(
+    settingsDialogOpen
+    || workspaceEditDialogOpen
+    || workspaceDeleteDialogOpen
+    || workspaceLimitDialogOpen
+    || workspaceImportResultDialog.open
+    || pushDialogOpen
+    || serverDialogOpen
+    || closeConfirmDialog.open
+    || collectionSaveDialogOpen
+    || cookieDialogOpen
+    || Boolean(serverDeleteTarget)
+    || renameDialogOpen
+    || deleteDialogOpen
+    || serverRefreshErrorOpen
+    || Boolean(fatalErrorDialog)
+    || Boolean(historyDeleteDialog)
+    || importDialogOpen
+    || Boolean(resourceReader)
+  )
+
+  useEffect(() => {
+    statusMessageChangedAtRef.current = Date.now()
+  }, [statusMessage])
+
+  useEffect(() => {
+    if (!modalActive) {
+      return
+    }
+    modalActivatedAtRef.current = Date.now()
+  }, [modalActive])
+
+  useEffect(() => {
+    const message = String(statusMessage || '').trim()
+    const isProgressOrInputHint = message.startsWith('正在') || message.startsWith('请先')
+    const handledByOtherDialog = Boolean(
+      (serverRefreshError?.message && message.includes(String(serverRefreshError.message)))
+      || (fatalErrorDialog && (message.includes(fatalErrorDialog) || fatalErrorDialog.includes(message))),
+    )
+    const isStaleStatusFromBeforeModal = statusMessageChangedAtRef.current < modalActivatedAtRef.current
+
+    if (!message || !modalActive || modalNoticeDialog.open || handledByOtherDialog || isProgressOrInputHint || isStaleStatusFromBeforeModal) {
+      return
+    }
+    const title = message.includes('失败') || message.includes('错误') ? '操作失败' : '提示'
+    setModalNoticeDialog({ open: true, title, message })
+    setStatusMessage('')
+  }, [statusMessage, modalActive, modalNoticeDialog.open, serverRefreshError, fatalErrorDialog])
+
+  useDialogReset('workspaceDelete', workspaceDeleteDialogOpen)
+  useDialogReset('delete', deleteDialogOpen)
+  useDialogReset('workspaceEdit', workspaceEditDialogOpen)
+  useDialogReset('closeConfirm', closeConfirmDialog.open)
+  useDialogReset('workspaceImportResult', workspaceImportResultDialog.open)
+  useDialogReset('modalNotice', modalNoticeDialog.open)
+  useDialogReset('serverRefreshError', serverRefreshErrorOpen)
+
+  function isWorkspacePushBusy(workspaceId) {
+    return pushPreviewLoadingWorkspaceId === workspaceId || pushingWorkspaceId === workspaceId
+  }
+
+  const globalLoadingMessage = loading
+    ? '正在加载 Post MCP 工作区...'
+    : workspaceSwitchingId
+      ? '正在切换工作空间...'
+      : ''
+  const globalLoadingActive = Boolean(globalLoadingMessage)
+
+  async function handleWorkspaceSwitch(workspaceId) {
+    if (workspaceId === activeWorkspaceId) {
+      return
+    }
+    if (!hasBackend()) {
+      setActiveWorkspaceId(workspaceId)
+      return
+    }
+    try {
+      setWorkspaceSwitchingId(workspaceId)
+      setWorkspaceUpdating(workspaceId)
+      setWorkspaceDropdownOpen(false)
+      setWorkspaceSearch('')
+      const next = await invokeBackend('SwitchWorkspace', workspaceId)
+      const normalized = normalizeBootstrap(next)
+      const nextActiveWorkspaceId = syncWorkspaceManagerState(normalized, workspaceId)
+      setBootstrap(normalized)
+      setExpandedFolders(buildExpandedFoldersState(normalized, nextActiveWorkspaceId))
+      setStatusMessage('已切换工作空间。')
+    } catch (error) {
+      setStatusMessage(`切换工作空间失败：${String(error?.message || error)}`)
+    } finally {
+      setWorkspaceSwitchingId('')
+      setWorkspaceOperationError()
+    }
+  }
+
+  async function syncWorkspaceFeatureSettings(patch) {
+    const next = {
+      multiWorkspaceEnabled: patch.multiWorkspaceEnabled ?? workspaceEnabled,
+      gitEnabled: patch.gitEnabled ?? gitEnabled,
+    }
+    setWorkspaceEnabled(next.multiWorkspaceEnabled)
+    setGitEnabled(next.gitEnabled)
+    if (!hasBackend()) {
+      return
+    }
+    try {
+      const manager = await invokeBackend('UpdateWorkspaceFeatureSettings', next)
+      setBootstrap((previous) => ({ ...previous, workspaceManager: manager }))
+    } catch (error) {
+      setStatusMessage(`更新工作空间设置失败：${String(error?.message || error)}`)
+    }
+  }
+
+  function openWorkspaceConfigDialog(workspace) {
+    setWorkspaceDropdownOpen(false)
+    setWorkspaceSearch('')
+    setWorkspaceEditErrors({ path: '', gitUrl: '', gitBranch: '' })
+    setWorkspaceEditDraft({ ...workspace, mode: 'create', isNew: false })
+    setWorkspaceEditDialogOpen(true)
+  }
+
+  function openWorkspaceDeleteDialog(workspace) {
+    setWorkspaceDropdownOpen(false)
+    setWorkspaceSearch('')
+    setWorkspaceDeleteTarget(workspace)
+    setDeleteWorkspaceLocalFiles(false)
+    setWorkspaceDeleteDialogOpen(true)
+  }
+
+  function openWorkspaceLimitDialog(message = `您的工作空间使用量已满（${mockWorkspaces.length}/${workspaceMaxCount}）。`) {
+    setWorkspaceLimitMessage(message)
+    setWorkspaceLimitDialogOpen(true)
+  }
+
+  function openCreateWorkspaceDialog(options = {}) {
+    if (options.closeDropdown) {
+      setWorkspaceDropdownOpen(false)
+      setWorkspaceSearch('')
+    }
+    if (mockWorkspaces.length >= workspaceMaxCount) {
+      openWorkspaceLimitDialog()
+      return
+    }
+    setWorkspaceEditErrors({ path: '', gitUrl: '', gitBranch: '' })
+    setWorkspaceEditDraft({
+      id: '',
+      name: '',
+      description: '',
+      creator: '',
+      path: '',
+      mode: 'create',
+      importSource: 'local',
+      gitUrl: '',
+      gitBranch: '',
+      includeHistoryInGit: false,
+      isNew: true,
+    })
+    setWorkspaceEditDialogOpen(true)
+  }
+
+  function closeWorkspaceDeleteDialog() {
+    setWorkspaceDeleteDialogOpen(false)
+  }
+
+  async function confirmDeleteWorkspace() {
+    if (!workspaceDeleteTarget) {
+      return
+    }
+
+    if (!hasBackend()) {
+      setBootstrap((previous) => {
+        const currentManager = previous.workspaceManager || {}
+        const nextWorkspaces = (currentManager.workspaces || []).filter((item) => item.id !== workspaceDeleteTarget.id)
+        const nextActiveWorkspaceId =
+          currentManager.activeWorkspaceId === workspaceDeleteTarget.id
+            ? (nextWorkspaces[0]?.id || '')
+            : currentManager.activeWorkspaceId
+        return {
+          ...previous,
+          workspaceManager: {
+            ...currentManager,
+            workspaces: nextWorkspaces,
+            activeWorkspaceId: nextActiveWorkspaceId,
+          },
+        }
+      })
+      closeWorkspaceDeleteDialog()
+      setStatusMessage('工作空间已删除。')
+      return
+    }
+
+    try {
+      const result = await invokeBackend('DeleteWorkspace', {
+        id: workspaceDeleteTarget.id,
+        deleteLocalFiles: Boolean(deleteWorkspaceLocalFiles),
+      })
+      if (result?.manager) {
+        setBootstrap((previous) => ({ ...previous, workspaceManager: result.manager }))
+      }
+      closeWorkspaceDeleteDialog()
+      if (result?.fileDeleteError) {
+        setStatusMessage(`工作空间已从配置删除，${result.fileDeleteError}`)
+      } else {
+        setStatusMessage('工作空间已删除。')
+      }
+    } catch (error) {
+      setStatusMessage(`删除工作空间失败：${String(error?.message || error)}`)
+    }
+  }
+
+  async function openPushPreview(workspace) {
+    if (!hasBackend()) {
+      return
+    }
+    setPushPreviewLoadingWorkspaceId(workspace.id)
+    try {
+      const preview = await invokeBackend('PreviewWorkspacePush', workspace.id)
+      setPushPreview(preview || { workspaceId: workspace.id, branch: 'main', remote: workspace.gitUrl || '', changes: [] })
+      setPushNote('')
+      setPushDialogOpen(true)
+    } catch (error) {
+      setStatusMessage(`读取推送预览失败：${String(error?.message || error)}`)
+    } finally {
+      setPushPreviewLoadingWorkspaceId('')
+    }
+  }
+
+  async function submitPushWorkspace() {
+    if (!hasBackend()) {
+      return
+    }
+    const paths = (pushPreview.changes || []).filter((item) => item.selected).map((item) => item.path)
+    const pushedWorkspaceId = pushPreview.workspaceId || '__pushing__'
+    setPushingWorkspaceId(pushedWorkspaceId)
+    try {
+      const result = await invokeBackend('PushWorkspaceChanges', {
+        workspaceId: pushPreview.workspaceId,
+        branch: pushPreview.branch,
+        message: pushNote,
+        paths,
+      })
+      setStatusMessage(result?.summary || '推送完成。')
+      setPushDialogOpen(false)
+      setLastPushedWorkspaceId(pushPreview.workspaceId)
+      setTimeout(() => setLastPushedWorkspaceId(''), OPERATION_SUCCESS_DELAY)
+    } catch (error) {
+      setStatusMessage(`推送失败：${String(error?.message || error)}`)
+    } finally {
+      setPushingWorkspaceId('')
+    }
+  }
+
   function updateSettings(patch) {
     setSettings((settings) => ({ ...settings, ...patch }))
   }
@@ -680,7 +1122,7 @@ function App() {
   function dismissCloseConfirm() {
     closeConfirmActionRef.current = null
     closeConfirmSaveActionRef.current = null
-    setCloseConfirmDialog({ open: false, message: '', canSaveAndClose: false })
+    setCloseConfirmDialog((current) => ({ ...current, open: false, canSaveAndClose: false }))
   }
 
   function confirmClose() {
@@ -1043,6 +1485,7 @@ function App() {
       title: `刷新 MCP 工具失败${serverName ? ` - ${serverName}` : ''}`,
       message,
     })
+    setServerRefreshErrorOpen(true)
   }
 
   function showRefreshSuccessToast(serverName, toolCount) {
@@ -1077,7 +1520,7 @@ function App() {
       if (!testResult?.success) {
         const message = testResult?.error || '连接失败'
         patchServerStatus(serverId, createServerStatus('error', message))
-        if (showStatusMessage) {
+        if (showStatusMessage && !manualRefresh) {
           setStatusMessage(`${serverName} 连接失败：${message}`)
         }
         if (manualRefresh) {
@@ -1092,7 +1535,7 @@ function App() {
 
       if (discovery?.error) {
         patchServerStatus(serverId, createServerStatus('warning', discovery.error, discovery.tools?.length || 0))
-        if (showStatusMessage) {
+        if (showStatusMessage && !manualRefresh) {
           setStatusMessage(`${serverName} 已连接，但 TOOL/LIST 失败：${discovery.error}`)
         }
         if (manualRefresh) {
@@ -1114,7 +1557,7 @@ function App() {
       const message = String(error?.message || error)
       const status = phase === 'discover' ? 'warning' : 'error'
       patchServerStatus(serverId, createServerStatus(status, message))
-      if (showStatusMessage) {
+      if (showStatusMessage && !manualRefresh) {
         setStatusMessage(message)
       }
       if (manualRefresh) {
@@ -1429,6 +1872,7 @@ function App() {
     }))
     if (collectionSaveDraft.folderId && collectionSaveDraft.folderId !== collectionRootValue) {
       setExpandedFolders((previous) => ({ ...previous, [collectionSaveDraft.folderId]: true }))
+      persistFolderExpandedState(collectionSaveDraft.folderId, true)
     }
     setCollectionSaveDialogOpen(false)
     setCollectionSaveSource(null)
@@ -1447,10 +1891,48 @@ function App() {
       ...store,
       items: insertNodeIntoFolder(store.items, parentId, folder),
     }))
-    setExpandedFolders((previous) => ({ ...previous, [folder.id]: true, ...(parentId !== collectionRootValue ? { [parentId]: true } : {}) }))
+    setExpandedFolders((previous) => ({ ...previous, [folder.id]: false, ...(parentId !== collectionRootValue ? { [parentId]: true } : {}) }))
+    persistFolderExpandedState(folder.id, false)
+    if (parentId !== collectionRootValue) {
+      persistFolderExpandedState(parentId, true)
+    }
+    setInlineRenameFolder({ id: folder.id, draft: folder.name || '新建文件夹' })
+  }
+
+  function startInlineRenameFolder(node) {
+    if (!node || node.type !== 'folder') {
+      return
+    }
+    setCollectionContextMenu(null)
+    setInlineRenameFolder({ id: node.id, draft: node.name || '' })
+  }
+
+  function cancelInlineRenameFolder() {
+    setInlineRenameFolder({ id: '', draft: '' })
+  }
+
+  function confirmInlineRenameFolder() {
+    if (!inlineRenameFolder.id) {
+      return
+    }
+    const nextName = String(inlineRenameFolder.draft || '').trim()
+    if (!nextName) {
+      setStatusMessage('名称不能为空。')
+      return
+    }
+    setCollections((store) => ({
+      ...store,
+      items: renameCollectionNode(store.items, inlineRenameFolder.id, nextName),
+    }))
+    setInlineRenameFolder({ id: '', draft: '' })
+    setStatusMessage(`已重命名为 ${nextName}。`)
   }
 
   function openRenameDialog(node) {
+    if (node?.type === 'folder') {
+      startInlineRenameFolder(node)
+      return
+    }
     setCollectionContextMenu(null)
     setRenameTarget(node)
     setRenameDraft(node.name || '')
@@ -1499,13 +1981,32 @@ function App() {
       ...store,
       items: deleteCollectionNode(store.items, deleteTarget.id),
     }))
+    if (deleteTarget.type === 'folder' && deleteTarget.id === inlineRenameFolder.id) {
+      setInlineRenameFolder({ id: '', draft: '' })
+    }
     setDeleteDialogOpen(false)
     setStatusMessage(deleteTarget.type === 'folder' ? `已删除文件夹 ${deleteTarget.name}。` : `已删除收藏 ${deleteTarget.name}。`)
     setDeleteTarget(null)
   }
 
+  function persistFolderExpandedState(folderId, expanded) {
+    const workspaceID = activeWorkspaceId || bootstrap.activeWorkspace?.id || 'default'
+    setSettings((settings) => {
+      const byWorkspace = { ...(settings.collectionFolderExpanded || {}) }
+      const workspaceMap = { ...(byWorkspace[workspaceID] || {}) }
+      workspaceMap[folderId] = Boolean(expanded)
+      byWorkspace[workspaceID] = workspaceMap
+      return {
+        ...settings,
+        collectionFolderExpanded: byWorkspace,
+      }
+    })
+  }
+
   function toggleCollectionFolder(folderId) {
-    setExpandedFolders((previous) => ({ ...previous, [folderId]: !previous[folderId] }))
+    const nextExpanded = !Boolean(expandedFolders[folderId])
+    setExpandedFolders((previous) => ({ ...previous, [folderId]: nextExpanded }))
+    persistFolderExpandedState(folderId, nextExpanded)
   }
 
   function handleCollectionDragStart(nodeId) {
@@ -1558,6 +2059,7 @@ function App() {
     }))
     if (position === 'inside' && targetId !== collectionRootValue) {
       setExpandedFolders((previous) => ({ ...previous, [targetId]: true }))
+      persistFolderExpandedState(targetId, true)
     }
     setCollectionDragState({ draggedId: '', targetId: '', position: '' })
   }
@@ -1834,8 +2336,135 @@ function App() {
       <div className="app-shell" style={appThemeVars}>
       <aside className="sidebar-panel">
         <div className="sidebar-header">
-          <div>
-            <h1>Post MCP</h1>
+          <div className="workspace-dropdown-container">
+            {!workspaceEnabled ? (
+              <>
+                <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
+                <div className="workspace-title-static">PostMCP</div>
+              </>
+            ) : (
+            <>
+              <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
+              <Popover open={workspaceDropdownOpen} onOpenChange={(_, data) => setWorkspaceDropdownOpen(data.open)} positioning={{ position: 'below', align: 'start' }}>
+                <PopoverTrigger disableButtonStyle>
+                  <button className="workspace-dropdown-trigger" onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}>
+                    <span className="workspace-dropdown-icon"><WrenchRegular /></span>
+                    <span className="workspace-dropdown-content">
+                      <span className="workspace-dropdown-label">工作空间</span>
+                      <span className="workspace-dropdown-value">
+                        {workspaceSlots.find((ws) => ws.id === activeWorkspaceId)?.name || '默认'}
+                      </span>
+                    </span>
+                    <span className={`workspace-dropdown-arrow ${workspaceDropdownOpen ? 'open' : ''}`}><ChevronDownRegular /></span>
+                  </button>
+                </PopoverTrigger>
+              <PopoverSurface className="workspace-dropdown-surface">
+                <div className="workspace-dropdown-header">
+                  <div className="workspace-dropdown-search-row">
+                    <div className="workspace-search-wrapper">
+                      <SearchRegular className="workspace-search-icon" />
+                      <Input
+                        className="workspace-search-input"
+                        placeholder="搜索工作空间..."
+                        value={workspaceSearch}
+                        onChange={(_, data) => setWorkspaceSearch(data.value)}
+                      />
+                    </div>
+                    <Button
+                      size="small"
+                      appearance="primary"
+                      icon={<AddRegular />}
+                      className="workspace-dropdown-add-btn"
+                      title="新增工作区"
+                      aria-label="新增工作区"
+                      onClick={() => openCreateWorkspaceDialog({ closeDropdown: true })}
+                    />
+                  </div>
+                </div>
+                <Divider />
+                <div className="workspace-dropdown-list">
+                  {workspaceSlots
+                    .filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase()))
+                    .slice(0, 5)
+                    .map((workspace) => (
+                      <div
+                        key={workspace.id}
+                        className={`workspace-dropdown-item ${workspace.id === activeWorkspaceId ? 'active' : ''}`}
+                        onClick={() => {
+                          handleWorkspaceSwitch(workspace.id)
+                        }}
+                      >
+                        <span className="workspace-item-icon"><WrenchRegular /></span>
+                        <div className="workspace-item-content">
+                          <span className="workspace-item-name">{workspace.name}</span>
+                          {workspace.path && <span className="workspace-item-path">{workspace.path}</span>}
+                        </div>
+                        <div className="workspace-item-actions">
+                          {workspace.id === activeWorkspaceId && gitEnabled && (
+                            <>
+                              <button
+                                className={`workspace-item-action-btn ${isWorkspacePushBusy(workspace.id) ? 'updating' : ''}`}
+                                title={isWorkspacePushBusy(workspace.id) ? '正在处理推送…' : '推送'}
+                                disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl || isWorkspacePushBusy(workspace.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openPushPreview(workspace)
+                                }}
+                              >
+                                {isWorkspacePushBusy(workspace.id) ? (
+                                  <span className="update-icon-wrapper rotating">
+                                    <ArrowClockwiseRegular />
+                                  </span>
+                                ) : (
+                                  <ArrowUpRegular />
+                                )}
+                              </button>
+                              <button
+                                className={`workspace-item-action-btn ${isWorkspaceUpdating(workspace.id) ? 'updating' : ''}`}
+                                title="拉取"
+                                disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleWorkspaceUpdate(workspace.id)
+                                }}
+                              >
+                                {isWorkspaceUpdating(workspace.id) ? (
+                                  <span className="update-icon-wrapper rotating">
+                                    <ArrowClockwiseRegular />
+                                  </span>
+                                ) : isWorkspaceUpdated(workspace.id) ? (
+                                  <span className="update-icon-success">
+                                    <CheckmarkCircleRegular />
+                                  </span>
+                                ) : (
+                                  <ArrowClockwiseRegular />
+                                )}
+                              </button>
+                            </>
+                          )}
+                          <button
+                            className="workspace-item-action-btn"
+                            title="配置"
+                            disabled={workspaceOperationState.updatingId !== null || workspace.readOnly}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openWorkspaceConfigDialog(workspace)
+                            }}
+                          >
+                            <SettingsRegular />
+                          </button>
+                        </div>
+                        {workspace.id === activeWorkspaceId && <CheckRegular className="workspace-item-check" />}
+                      </div>
+                    ))}
+                  {workspaceSlots.filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase())).length === 0 && (
+                    <div className="workspace-dropdown-empty">暂无匹配的工作空间</div>
+                  )}
+                </div>
+              </PopoverSurface>
+            </Popover>
+            </>
+            )}
           </div>
         </div>
 
@@ -1862,12 +2491,17 @@ function App() {
                     nodes={bootstrap.collections.items}
                     expandedFolders={expandedFolders}
                     dragState={collectionDragState}
+                    renamingFolderId={inlineRenameFolder.id}
+                    renamingFolderDraft={inlineRenameFolder.draft}
                     onContextMenu={handleCollectionContextMenu}
                     onDragEnd={clearCollectionDragState}
                     onDragOver={handleCollectionDragOver}
                     onDragStart={handleCollectionDragStart}
                     onDrop={handleCollectionDrop}
                     onOpenRequest={openCollectionRequest}
+                    onRenameFolderCancel={cancelInlineRenameFolder}
+                    onRenameFolderChange={(value) => setInlineRenameFolder((current) => ({ ...current, draft: value }))}
+                    onRenameFolderConfirm={confirmInlineRenameFolder}
                     onToggleFolder={toggleCollectionFolder}
                   />
                 </div>
@@ -2225,24 +2859,39 @@ function App() {
                   <Caption1>代码片段</Caption1>
                 </div>
 
-                <Field label="代码语言">
-                    <Dropdown
-                      selectedOptions={[activeTab.mode === modes.http ? bootstrap.settings.httpCodeLanguage : bootstrap.settings.mcpCodeLanguage]}
-                      value={activeTab.mode === modes.http ? bootstrap.settings.httpCodeLanguage : bootstrap.settings.mcpCodeLanguage}
-                      onOptionSelect={(_, data) =>
-                        setSettings((settings) =>
-                          activeTab.mode === modes.http
-                            ? { ...settings, httpCodeLanguage: data.optionValue }
-                            : { ...settings, mcpCodeLanguage: data.optionValue },
-                        )
-                      }
-                    >
-                      {snippetLanguages[activeTab.mode].map((language) => (
-                        <Option key={language} value={language}>{language}</Option>
-                      ))}
-                    </Dropdown>
-                  </Field>
-                  <Textarea className="snippet-textarea" resize="vertical" value={currentSnippet} readOnly />
+                <div className="snippet-content">
+                  <div className="snippet-language-row">
+                    <Field label="代码语言">
+                      <Dropdown
+                        selectedOptions={[activeTab.mode === modes.http ? bootstrap.settings.httpCodeLanguage : bootstrap.settings.mcpCodeLanguage]}
+                        value={activeTab.mode === modes.http ? bootstrap.settings.httpCodeLanguage : bootstrap.settings.mcpCodeLanguage}
+                        onOptionSelect={(_, data) =>
+                          setSettings((settings) =>
+                            activeTab.mode === modes.http
+                              ? { ...settings, httpCodeLanguage: data.optionValue }
+                              : { ...settings, mcpCodeLanguage: data.optionValue },
+                          )
+                        }
+                      >
+                        {snippetLanguages[activeTab.mode].map((language) => (
+                          <Option key={language} value={language}>{language}</Option>
+                        ))}
+                      </Dropdown>
+                    </Field>
+                    <Tooltip content="复制代码" relationship="label">
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<CopyRegular />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(currentSnippet)
+                          setStatusMessage('代码已复制到剪贴板')
+                        }}
+                      />
+                    </Tooltip>
+                  </div>
+                  <Textarea className="snippet-textarea" resize="none" value={currentSnippet} readOnly />
+                </div>
               </aside>
             )}
           </div>
@@ -2268,6 +2917,7 @@ function App() {
               <TabList selectedValue={settingsTab} onTabSelect={(_, data) => setSettingsTab(data.value)}>
                 <Tab value="general">全局设置</Tab>
                 <Tab value="theme">主题风格</Tab>
+                <Tab value="workspace">工作空间</Tab>
               </TabList>
               <div className="settings-tab-content">
                 {settingsTab === 'general' && (
@@ -2470,8 +3120,620 @@ function App() {
                     </div>
                   </div>
                 )}
+                {settingsTab === 'workspace' && (
+                  <div className="settings-panel">
+                    <div className="settings-section">
+                      <h3 className="settings-section-title">📁 工作空间设置</h3>
+                      <div className="settings-switches">
+                        <Switch 
+                          checked={workspaceEnabled} 
+                          label="启用多工作空间支持" 
+                          onChange={async (_, data) => {
+                            if (!data.checked) {
+                              await handleWorkspaceSwitch('default')
+                            }
+                            syncWorkspaceFeatureSettings({ multiWorkspaceEnabled: data.checked, gitEnabled: gitEnabled && data.checked })
+                          }} 
+                        />
+                        <Switch 
+                          checked={gitEnabled} 
+                          label={
+                            <Tooltip content={gitCheck.available ? `Git 版本：${gitCheck.version}` : `Git 不可用：${gitCheck.error || '未检测到 Git'}`} relationship="label">
+                              <span>启用 Git 支持（需要本地已安装 Git）</span>
+                            </Tooltip>
+                          } 
+                          onChange={(_, data) => syncWorkspaceFeatureSettings({ gitEnabled: data.checked, multiWorkspaceEnabled: workspaceEnabled })}
+                          disabled={!workspaceEnabled}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`settings-section ${!workspaceEnabled ? 'disabled-section' : ''}`}>
+                      <div className="workspace-table-header">
+                        <span className="workspace-table-title">工作空间管理</span>
+                        <div className="workspace-search-actions-row">
+                          <div className="workspace-search-wrapper">
+                            <SearchRegular className="workspace-search-icon" />
+                            <Input
+                              className="workspace-search-input"
+                              placeholder="搜索工作空间..."
+                              value={workspaceTableSearch}
+                              onChange={(_, data) => {
+                                setWorkspaceTableSearch(data.value)
+                                setWorkspaceTablePage(1)
+                              }}
+                            />
+                          </div>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<SearchRegular />}
+                            title="搜索"
+                            style={{ color: 'var(--brand)' }}
+                          />
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<AddRegular />}
+                            title="添加工作空间"
+                            style={{ color: 'var(--brand)' }}
+                            onClick={openCreateWorkspaceDialog}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="workspace-table-wrapper">
+                        <table className="workspace-table">
+                          <thead>
+                            <tr>
+                              <th>工作空间名称</th>
+                              <th>本地目录</th>
+                              {gitEnabled && <th>远程 Git 地址</th>}
+                              {gitEnabled && <th>Git 分支</th>}
+                              <th>操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mockWorkspaces
+                              .filter((ws) => ws.name.toLowerCase().includes(workspaceTableSearch.toLowerCase()))
+                              .slice((workspaceTablePage - 1) * 10, workspaceTablePage * 10)
+                              .map((item) => (
+                                <tr key={item.id}>
+                                  <td>{item.name}</td>
+                                  <td title={item.path}>{item.path}</td>
+                                  {gitEnabled && <td title={item.gitUrl}>{item.gitUrl || '-'}</td>}
+                                  {gitEnabled && <td title={item.gitBranch}>{!item.gitUrl ? '-' : (item.gitBranch || '-')}</td>}
+                                  <td>
+                                    <div className="workspace-table-actions">
+                                      {gitEnabled && (
+                                        <>
+                                          <Button
+                                            size="small"
+                                            appearance="subtle"
+                                            icon={
+                                              pushingWorkspaceId === item.id ? (
+                                                <span className="update-icon-wrapper rotating">
+                                                  <ArrowClockwiseRegular />
+                                                </span>
+                                              ) : lastPushedWorkspaceId === item.id ? (
+                                                <span className="update-icon-success">
+                                                  <CheckmarkCircleRegular />
+                                                </span>
+                                              ) : (
+                                                <ArrowUpRegular />
+                                              )
+                                            }
+                                            title={pushingWorkspaceId === item.id ? '正在推送…' : '推送'}
+                                            disabled={!item.gitUrl || !gitEnabled || pushingWorkspaceId !== ''}
+                                            onClick={() => openPushPreview(item)}
+                                          />
+                                          <Button
+                                            size="small"
+                                            appearance="subtle"
+                                            icon={
+                                              isWorkspaceUpdating(item.id) ? (
+                                                <span className="update-icon-wrapper rotating">
+                                                  <ArrowClockwiseRegular />
+                                                </span>
+                                              ) : isWorkspaceUpdated(item.id) ? (
+                                                <span className="update-icon-success">
+                                                  <CheckmarkCircleRegular />
+                                                </span>
+                                              ) : (
+                                                <ArrowClockwiseRegular />
+                                              )
+                                            }
+                                            title={isWorkspaceUpdating(item.id) ? '正在拉取…' : '拉取'}
+                                            disabled={!item.gitUrl || !gitEnabled || workspaceOperationState.updatingId !== null}
+                                            onClick={() => handleWorkspaceUpdate(item.id)}
+                                          />
+                                        </>
+                                      )}
+                                      <Button
+                                        size="small"
+                                        appearance="subtle"
+                                        icon={<SettingsRegular />}
+                                        title="配置"
+                                        disabled={item.readOnly}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          openWorkspaceConfigDialog(item)
+                                        }}
+                                      />
+                                      <Button
+                                        size="small"
+                                        appearance="subtle"
+                                        icon={<DeleteRegular />}
+                                        title="删除"
+                                        disabled={item.readOnly}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          openWorkspaceDeleteDialog(item)
+                                        }}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="workspace-pagination">
+                        <div className="pagination-buttons">
+                          <Button 
+                            size="small" 
+                            appearance="subtle" 
+                            icon={<ChevronLeftRegular />} 
+                            disabled={workspaceTablePage === 1}
+                            onClick={() => setWorkspaceTablePage(p => p - 1)}
+                          />
+                          <span className="pagination-info">
+                            第 {workspaceTablePage} 页 / 共 {Math.max(1, Math.ceil(mockWorkspaces.filter((ws) => ws.name.toLowerCase().includes(workspaceTableSearch.toLowerCase())).length / 10))} 页
+                          </span>
+                          <Button 
+                            size="small" 
+                            appearance="subtle" 
+                            icon={<ChevronRightRegular />} 
+                            disabled={workspaceTablePage >= Math.max(1, Math.ceil(mockWorkspaces.filter((ws) => ws.name.toLowerCase().includes(workspaceTableSearch.toLowerCase())).length / 10))}
+                            onClick={() => setWorkspaceTablePage(p => p + 1)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="workspace-usage">
+                        <div className="workspace-usage-label">
+                          <StorageRegular className="workspace-usage-icon" />
+                          <span>当前工作空间使用量：{mockWorkspaces.length}/{workspaceMaxCount}</span>
+                        </div>
+                        <div className="workspace-usage-progress">
+                          <div className="workspace-usage-bar" style={{ width: `${workspaceUsagePercent}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </DialogContent>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={workspaceEditDialogOpen}
+        onOpenChange={(_, data) => {
+          if (workspaceImporting && !data.open) {
+            return
+          }
+          setWorkspaceEditDialogOpen(data.open)
+        }}
+      >
+        <DialogSurface className="dialog-surface">
+          <DialogBody>
+            <div className="dialog-header-with-close">
+              <DialogTitle>
+                {workspaceEditDraft.isNew ? '新增工作空间' : `编辑：${workspaceEditDraft.name}`}
+              </DialogTitle>
+              <Button
+                appearance="subtle"
+                size="small"
+                icon={<DismissRegular />}
+                onClick={() => {
+                  setWorkspaceEditDialogOpen(false)
+                }}
+                className="dialog-close-button"
+                disabled={workspaceImporting}
+              />
+            </div>
+            <DialogContent>
+              <div className="dialog-grid-single">
+                {workspaceEditDraft.isNew && (
+                  <Field label="工作空间名称">
+                    <Input
+                      value={workspaceEditDraft.name}
+                      onChange={(_, data) => setWorkspaceEditDraft((current) => ({ ...current, name: data.value }))}
+                      placeholder={workspaceEditDraft.mode === 'import' ? '可留空，默认使用目录名称' : '输入工作空间名称'}
+                    />
+                  </Field>
+                )}
+                <Field label="描述">
+                  <Input
+                    value={workspaceEditDraft.description || ''}
+                    onChange={(_, data) => setWorkspaceEditDraft((current) => ({ ...current, description: data.value }))}
+                    placeholder="工作空间用途说明"
+                  />
+                </Field>
+                <Field label="创建人">
+                  <Input
+                    value={workspaceEditDraft.creator || ''}
+                    onChange={(_, data) => setWorkspaceEditDraft((current) => ({ ...current, creator: data.value }))}
+                    placeholder="例如：Alice"
+                  />
+                </Field>
+                {workspaceEditDraft.isNew && (
+                  <Field label="创建方式">
+                    <RadioGroup
+                      value={workspaceEditDraft.mode || 'create'}
+                      onChange={(_, data) => {
+                        const mode = data.value === 'import' ? 'import' : 'create'
+                        setWorkspaceEditDraft((current) => ({
+                          ...current,
+                          mode,
+                          importSource: mode === 'import' ? (current.importSource || 'local') : current.importSource,
+                        }))
+                      }}
+                    >
+                      <Radio value="create" label="新建" />
+                      <Radio value="import" label="导入" />
+                    </RadioGroup>
+                  </Field>
+                )}
+                {workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import' && (
+                  <Field label="导入来源">
+                    <RadioGroup
+                      value={workspaceEditDraft.importSource || 'local'}
+                      onChange={(_, data) => {
+                        const importSource = data.value === 'remote' ? 'remote' : 'local'
+                        if (importSource === 'remote' && !gitEnabled) {
+                          return
+                        }
+                        setWorkspaceEditDraft((current) => ({
+                          ...current,
+                          importSource,
+                          gitUrl: importSource === 'local' ? '' : current.gitUrl,
+                          gitBranch: importSource === 'local' ? '' : current.gitBranch,
+                        }))
+                      }}
+                    >
+                      <Radio value="local" label="从本地文件夹导入" />
+                      <Radio value="remote" label="从远端 Git 地址导入" disabled={!gitEnabled} />
+                    </RadioGroup>
+                    {!gitEnabled && <Caption1>请先在设置中启用 Git 支持后再使用远端导入。</Caption1>}
+                  </Field>
+                )}
+                <Field
+                  label={
+                    workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import'
+                      ? (workspaceEditDraft.importSource || 'local') === 'remote'
+                        ? '本地目录'
+                        : '导入目录'
+                      : '父目录'
+                  }
+                  validationState={workspaceEditErrors.path ? 'error' : undefined}
+                  validationMessage={workspaceEditErrors.path || undefined}
+                >
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Input
+                      value={workspaceEditDraft.path}
+                      onChange={(_, data) => {
+                        setWorkspaceEditDraft((current) => ({ ...current, path: data.value }))
+                        setWorkspaceEditErrors((current) => ({ ...current, path: '' }))
+                      }}
+                      placeholder={
+                        workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import'
+                          ? (workspaceEditDraft.importSource || 'local') === 'remote'
+                            ? '选择本地目录（将克隆远端 Git 仓库到该目录）'
+                            : '选择现有工作空间目录（必须非空且已完成初始化）'
+                          : '选择父目录（将在该目录下自动创建“工作空间名称”文件夹）'
+                      }
+                      disabled={!workspaceEditDraft.isNew}
+                      style={{ flex: 1 }}
+                    />
+                    {workspaceEditDraft.isNew && (
+                      <Button
+                        icon={<FolderOpenRegular />}
+                        title="选择文件夹"
+                        onClick={async () => {
+                          try {
+                            const selectedPath = await invokeBackend('SelectFolder')
+                            if (selectedPath) {
+                              setWorkspaceEditDraft((current) => ({ ...current, path: selectedPath }))
+                            }
+                          } catch (error) {
+                            console.error('选择文件夹失败:', error)
+                          }
+                        }}
+                      />
+                    )}
+                  </div>
+                </Field>
+                {!(workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import' && (workspaceEditDraft.importSource || 'local') === 'local') && (
+                  <>
+                    <Field label="远端地址" validationState={workspaceEditErrors.gitUrl ? 'error' : undefined} validationMessage={workspaceEditErrors.gitUrl || undefined}>
+                      <Input
+                        value={workspaceEditDraft.gitUrl}
+                        onChange={(_, data) => {
+                          setWorkspaceEditDraft((current) => ({ ...current, gitUrl: data.value }))
+                          setWorkspaceEditErrors((current) => ({ ...current, gitUrl: '' }))
+                        }}
+                        placeholder="https://github.com/user/repo.git"
+                      />
+                    </Field>
+                    <Field label="Git 分支" validationState={workspaceEditErrors.gitBranch ? 'error' : undefined} validationMessage={workspaceEditErrors.gitBranch || undefined}>
+                      <Input
+                        value={workspaceEditDraft.gitBranch}
+                        onChange={(_, data) => {
+                          setWorkspaceEditDraft((current) => ({ ...current, gitBranch: data.value }))
+                          setWorkspaceEditErrors((current) => ({ ...current, gitBranch: '' }))
+                        }}
+                        placeholder="例如：feature/workspace-import"
+                      />
+                      <Caption1>留空时按 main 处理。</Caption1>
+                    </Field>
+                  </>
+                )}
+                <Field>
+                  <Switch
+                    checked={Boolean(workspaceEditDraft.includeHistoryInGit)}
+                    label="允许提交历史记录"
+                    onChange={(_, data) => setWorkspaceEditDraft((current) => ({ ...current, includeHistoryInGit: data.checked }))}
+                    disabled={!gitEnabled}
+                  />
+                </Field>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="primary"
+                disabled={workspaceImporting}
+                onClick={async () => {
+                  try {
+                    if (!hasBackend()) {
+                      setWorkspaceEditDialogOpen(false)
+                      return
+                    }
+                    const importSource = workspaceEditDraft.importSource || 'local'
+                    const isImportRemote = workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import' && importSource === 'remote'
+                    const isImportOperation = workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import'
+                    const nextErrors = { path: '', gitUrl: '', gitBranch: '' }
+                    if (isImportRemote) {
+                      if (!String(workspaceEditDraft.path || '').trim()) {
+                        nextErrors.path = '从远端导入时，本地目录不能为空。'
+                      }
+                      if (!String(workspaceEditDraft.gitUrl || '').trim()) {
+                        nextErrors.gitUrl = '从远端导入时，远端地址不能为空。'
+                      }
+                    }
+                    if (nextErrors.path || nextErrors.gitUrl || nextErrors.gitBranch) {
+                      setWorkspaceEditErrors(nextErrors)
+                      return
+                    }
+                    setWorkspaceEditErrors({ path: '', gitUrl: '', gitBranch: '' })
+                    if (workspaceEditDraft.isNew) {
+                      if (mockWorkspaces.length >= workspaceMaxCount) {
+                        setWorkspaceEditDialogOpen(false)
+                        openWorkspaceLimitDialog()
+                        return
+                      }
+                      if (isImportOperation) {
+                        setWorkspaceImporting(true)
+                      }
+                      const manager = await invokeBackend('CreateWorkspace', {
+                        name: workspaceEditDraft.name,
+                        description: workspaceEditDraft.description,
+                        creator: workspaceEditDraft.creator,
+                        path: workspaceEditDraft.path,
+                        mode: workspaceEditDraft.mode || 'create',
+                        importSource,
+                        gitUrl: workspaceEditDraft.gitUrl,
+                        gitBranch: workspaceEditDraft.gitBranch,
+                        includeHistoryInGit: Boolean(workspaceEditDraft.includeHistoryInGit),
+                      })
+                      setBootstrap((previous) => ({ ...previous, workspaceManager: manager }))
+                      if (isImportOperation) {
+                        setWorkspaceImportResultDialog({
+                          open: true,
+                          title: '导入成功',
+                          message: '工作空间导入完成。',
+                        })
+                      }
+                    } else {
+                      const manager = await invokeBackend('UpdateWorkspace', {
+                        id: workspaceEditDraft.id,
+                        name: workspaceEditDraft.name,
+                        description: workspaceEditDraft.description,
+                        creator: workspaceEditDraft.creator,
+                        gitUrl: workspaceEditDraft.gitUrl,
+                        gitBranch: workspaceEditDraft.gitBranch,
+                        includeHistoryInGit: Boolean(workspaceEditDraft.includeHistoryInGit),
+                      })
+                      setBootstrap((previous) => ({ ...previous, workspaceManager: manager }))
+                    }
+                    setWorkspaceEditDialogOpen(false)
+                    if (!isImportOperation) {
+                      setModalNoticeDialog({ open: true, title: '保存成功', message: '工作空间已保存。' })
+                    }
+                  } catch (error) {
+                    const errorMessage = String(error?.message || error)
+                    const importSource = workspaceEditDraft.importSource || 'local'
+                    const isImportOperation = workspaceEditDraft.isNew && workspaceEditDraft.mode === 'import' && (importSource === 'local' || importSource === 'remote')
+                    const limitMatch = errorMessage.match(/workspace count exceeds limit:\s*(\d+)/i)
+                    if (limitMatch) {
+                      const backendLimit = Number(limitMatch[1])
+                      setWorkspaceEditDialogOpen(false)
+                      openWorkspaceLimitDialog(`您的工作空间使用量已满（${mockWorkspaces.length}/${Number.isFinite(backendLimit) ? backendLimit : workspaceMaxCount}）。`)
+                      return
+                    }
+                    if (isImportOperation) {
+                      setWorkspaceImportResultDialog({
+                        open: true,
+                        title: '导入失败',
+                        message: `保存工作空间失败：${errorMessage}`,
+                      })
+                    } else {
+                      setModalNoticeDialog({ open: true, title: '保存失败', message: `保存工作空间失败：${errorMessage}` })
+                    }
+                  } finally {
+                    setWorkspaceImporting(false)
+                  }
+                }}
+              >
+                {workspaceImporting ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    <Spinner size="tiny" />
+                    导入中...
+                  </span>
+                ) : '确定'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={workspaceDeleteDialogOpen}
+        onOpenChange={(_, data) => {
+          if (!data.open) {
+            closeWorkspaceDeleteDialog()
+          }
+        }}
+      >
+        <DialogSurface className="dialog-surface dialog-surface-compact">
+          <DialogBody>
+            <DialogTitle>删除工作空间</DialogTitle>
+            <DialogContent>
+              <div className="dialog-grid dialog-grid-single">
+                <Body1>确认删除工作空间“{workspaceDeleteTarget?.name || ''}”吗？</Body1>
+                <Checkbox
+                  checked={deleteWorkspaceLocalFiles}
+                  label="删除本地磁盘文件（包含目录下所有文件）"
+                  onChange={(_, data) => setDeleteWorkspaceLocalFiles(Boolean(data.checked))}
+                />
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeWorkspaceDeleteDialog}>取消</Button>
+              <Button appearance="primary" onClick={confirmDeleteWorkspace}>删除</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={workspaceLimitDialogOpen} onOpenChange={(_, data) => setWorkspaceLimitDialogOpen(data.open)}>
+        <DialogSurface className="dialog-surface dialog-surface-compact">
+          <DialogBody>
+            <DialogTitle>工作空间容量已满</DialogTitle>
+            <DialogContent>
+              <Body1>{workspaceLimitMessage}</Body1>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setWorkspaceLimitDialogOpen(false)}>我知道了</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={workspaceImportResultDialog.open}
+        onOpenChange={(_, data) => {
+          if (!data.open) {
+            setWorkspaceImportResultDialog((current) => ({ ...current, open: false }))
+          }
+        }}
+      >
+        <DialogSurface className="dialog-surface dialog-surface-compact">
+          <DialogBody>
+            <DialogTitle>{workspaceImportResultDialog.title || '导入结果'}</DialogTitle>
+            <DialogContent>
+              <Body1>{workspaceImportResultDialog.message}</Body1>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="primary"
+                onClick={() => setWorkspaceImportResultDialog((current) => ({ ...current, open: false }))}
+              >
+                我知道了
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={modalNoticeDialog.open}
+        onOpenChange={(_, data) => {
+          if (!data.open) {
+            setModalNoticeDialog((current) => ({ ...current, open: false }))
+          }
+        }}
+      >
+        <DialogSurface className="dialog-surface dialog-surface-compact">
+          <DialogBody>
+            <DialogTitle>{modalNoticeDialog.title || '提示'}</DialogTitle>
+            <DialogContent>
+              <Body1>{modalNoticeDialog.message}</Body1>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="primary" onClick={() => setModalNoticeDialog((current) => ({ ...current, open: false }))}>我知道了</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={pushDialogOpen} onOpenChange={(_, data) => setPushDialogOpen(data.open)}>
+        <DialogSurface className="dialog-surface">
+          <DialogBody>
+            <DialogTitle>推送预览</DialogTitle>
+            <DialogContent>
+              <div className="dialog-grid dialog-grid-single">
+                <Caption1>分支：{pushPreview.branch || 'main'}</Caption1>
+                <Caption1>远端：{pushPreview.remote || '-'}</Caption1>
+                <div className="workspace-push-list">
+                  {(pushPreview.changes || []).map((item) => (
+                    <label key={`${item.status}-${item.path}`} className="workspace-push-item">
+                      <input
+                        type="checkbox"
+                        checked={item.selected !== false}
+                        onChange={(event) => {
+                          const checked = event.target.checked
+                          setPushPreview((current) => ({
+                            ...current,
+                            changes: (current.changes || []).map((row) => (row.path === item.path ? { ...row, selected: Boolean(checked) } : row)),
+                          }))
+                        }}
+                      />
+                      <Badge appearance={item.status === 'added' ? 'filled' : item.status === 'deleted' ? 'outline' : 'tint'}>
+                        {item.status === 'added' ? '新增' : item.status === 'deleted' ? '删除' : '更新'}
+                      </Badge>
+                      <span className="workspace-push-resource">{item.resource}</span>
+                      <Tooltip content={item.path} relationship="label">
+                        <code className="workspace-push-path">{item.path}</code>
+                      </Tooltip>
+                    </label>
+                  ))}
+                  {!(pushPreview.changes || []).length && <Caption1>没有可推送的变更。</Caption1>}
+                </div>
+                <Field label="备注（版本信息）">
+                  <Textarea value={pushNote} onChange={(_, data) => setPushNote(data.value)} placeholder="例如：feat: 同步 MCP 服务配置" />
+                </Field>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setPushDialogOpen(false)} disabled={Boolean(pushingWorkspaceId)}>取消</Button>
+              <Button appearance="primary" onClick={submitPushWorkspace} disabled={Boolean(pushingWorkspaceId) || !(pushPreview.changes || []).some((item) => item.selected !== false)}>
+                {pushingWorkspaceId ? '推送中…' : '推送'}
+              </Button>
+            </DialogActions>
           </DialogBody>
         </DialogSurface>
       </Dialog>
@@ -2681,7 +3943,7 @@ function App() {
         </DialogSurface>
       </Dialog>
 
-      <Dialog open={deleteDialogOpen} onOpenChange={(_, data) => { setDeleteDialogOpen(data.open); if (!data.open) { setDeleteTarget(null) } }}>
+      <Dialog open={deleteDialogOpen} onOpenChange={(_, data) => { setDeleteDialogOpen(data.open) }}>
         <DialogSurface className="dialog-surface dialog-surface-compact">
           <DialogBody>
             <DialogTitle>{deleteTarget?.type === 'folder' ? '确认删除文件夹' : '确认删除收藏'}</DialogTitle>
@@ -2693,14 +3955,14 @@ function App() {
               </Body1>
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={() => { setDeleteDialogOpen(false); setDeleteTarget(null) }}>取消</Button>
+              <Button appearance="secondary" onClick={() => { setDeleteDialogOpen(false) }}>取消</Button>
               <Button appearance="primary" onClick={confirmDeleteCollectionEntry}>删除</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
       </Dialog>
 
-      <Dialog open={!!serverRefreshError} onOpenChange={(_, data) => { if (!data.open) { setServerRefreshError(null) } }}>
+      <Dialog open={serverRefreshErrorOpen} onOpenChange={(_, data) => { if (!data.open) { setServerRefreshErrorOpen(false) } }}>
         <DialogSurface className="dialog-surface dialog-surface-compact">
           <DialogBody>
             <DialogTitle>{serverRefreshError?.title || '刷新 MCP 工具失败'}</DialogTitle>
@@ -2708,7 +3970,7 @@ function App() {
               <Body1>{serverRefreshError?.message || '未知错误'}</Body1>
             </DialogContent>
             <DialogActions>
-              <Button appearance="primary" onClick={() => setServerRefreshError(null)}>知道了</Button>
+              <Button appearance="primary" onClick={() => setServerRefreshErrorOpen(false)}>知道了</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>
@@ -2815,6 +4077,12 @@ function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      {globalLoadingActive && (
+        <div className="global-loading-overlay" style={appThemeVars}>
+          <Spinner label={globalLoadingMessage} />
+        </div>
+      )}
       </div>
     </FluentProvider>
   )
@@ -2860,12 +4128,17 @@ function CollectionTree({
   nodes,
   dragState,
   expandedFolders,
+  renamingFolderId,
+  renamingFolderDraft,
   onContextMenu,
   onDragEnd,
   onDragOver,
   onDragStart,
   onDrop,
   onOpenRequest,
+  onRenameFolderCancel,
+  onRenameFolderChange,
+  onRenameFolderConfirm,
   onToggleFolder,
 }) {
   if (!nodes.length) {
@@ -2879,12 +4152,17 @@ function CollectionTree({
       dragState={dragState}
       expandedFolders={expandedFolders}
       node={node}
+      renamingFolderId={renamingFolderId}
+      renamingFolderDraft={renamingFolderDraft}
       onContextMenu={onContextMenu}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDragStart={onDragStart}
       onDrop={onDrop}
       onOpenRequest={onOpenRequest}
+      onRenameFolderCancel={onRenameFolderCancel}
+      onRenameFolderChange={onRenameFolderChange}
+      onRenameFolderConfirm={onRenameFolderConfirm}
       onToggleFolder={onToggleFolder}
     />
   ))
@@ -2895,15 +4173,21 @@ function CollectionTreeNode({
   dragState,
   expandedFolders,
   node,
+  renamingFolderId,
+  renamingFolderDraft,
   onContextMenu,
   onDragEnd,
   onDragOver,
   onDragStart,
   onDrop,
   onOpenRequest,
+  onRenameFolderCancel,
+  onRenameFolderChange,
+  onRenameFolderConfirm,
   onToggleFolder,
 }) {
   const isFolder = node.type === 'folder'
+  const isRenamingFolder = isFolder && renamingFolderId === node.id
   const expanded = isFolder ? expandedFolders[node.id] !== false : false
   const dragClassName =
     dragState.targetId === node.id
@@ -2918,7 +4202,7 @@ function CollectionTreeNode({
     <div className="collection-tree-node">
       <div
         className={`collection-tree-row ${dragClassName}`.trim()}
-        draggable
+        draggable={!isRenamingFolder}
         onContextMenu={(event) => onContextMenu(event, node)}
         onDragEnd={onDragEnd}
         onDragOver={(event) => onDragOver(event, node)}
@@ -2934,22 +4218,53 @@ function CollectionTreeNode({
           <span className="collection-toggle-spacer" />
         )}
 
-        <button
-          className={`collection-node-button ${isFolder ? 'is-folder' : 'is-request'}`}
-          onContextMenu={(event) => onContextMenu(event, node)}
-          title={node.name}
-          onClick={() => {
-            if (isFolder) {
-              onToggleFolder(node.id)
-              return
-            }
+        {isRenamingFolder ? (
+          <div className="collection-node-button is-folder" onContextMenu={(event) => onContextMenu(event, node)}>
+            <strong className="collection-node-title" style={{ flex: 1 }}>
+              <span className="collection-node-icon">{expanded ? <FolderOpenRegular /> : <FolderRegular />}</span>
+              <Input
+                autoFocus
+                size="small"
+                value={renamingFolderDraft}
+                onChange={(_, data) => onRenameFolderChange(data.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    onRenameFolderConfirm()
+                    return
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    onRenameFolderCancel()
+                  }
+                }}
+                onClick={(event) => event.stopPropagation()}
+                style={{ flex: 1 }}
+              />
+            </strong>
+            <div style={{ display: 'inline-flex', gap: '4px', marginLeft: '8px' }}>
+              <Button size="small" appearance="subtle" icon={<CheckRegular />} onClick={onRenameFolderConfirm} />
+              <Button size="small" appearance="subtle" icon={<DismissRegular />} onClick={onRenameFolderCancel} />
+            </div>
+          </div>
+        ) : (
+          <button
+            className={`collection-node-button ${isFolder ? 'is-folder' : 'is-request'}`}
+            onContextMenu={(event) => onContextMenu(event, node)}
+            title={node.name}
+            onClick={() => {
+              if (isFolder) {
+                onToggleFolder(node.id)
+                return
+              }
 
-            onOpenRequest(node)
-          }}
-          type="button"
-        >
-          <CollectionNodeTitle node={node} isFolder={isFolder} expanded={expanded} />
-        </button>
+              onOpenRequest(node)
+            }}
+            type="button"
+          >
+            <CollectionNodeTitle node={node} isFolder={isFolder} expanded={expanded} />
+          </button>
+        )}
       </div>
 
       {isFolder && expanded && (
@@ -2962,17 +4277,22 @@ function CollectionTreeNode({
                 dragState={dragState}
                 expandedFolders={expandedFolders}
                 node={child}
+                renamingFolderId={renamingFolderId}
+                renamingFolderDraft={renamingFolderDraft}
                 onContextMenu={onContextMenu}
                 onDragEnd={onDragEnd}
                 onDragOver={onDragOver}
                 onDragStart={onDragStart}
                 onDrop={onDrop}
                 onOpenRequest={onOpenRequest}
+                onRenameFolderCancel={onRenameFolderCancel}
+                onRenameFolderChange={onRenameFolderChange}
+                onRenameFolderConfirm={onRenameFolderConfirm}
                 onToggleFolder={onToggleFolder}
               />
             ))
           ) : (
-            <div className="collection-folder-empty">空文件夹，可拖入请求或右键重命名。</div>
+            <div className="collection-folder-empty">空文件夹</div>
           )}
         </div>
       )}
@@ -3000,32 +4320,6 @@ function CollectionNodeTitle({ node, isFolder, expanded }) {
       <span className="history-title-accent">{accent}</span>
       <span>{node.name}</span>
     </strong>
-  )
-}
-
-function KeyValueEditor({ title, rows, onChange }) {
-  const safeRows = (rows || []).map((item) => ({ ...newPair(), ...item }))
-
-  return (
-    <div className="key-value-editor">
-      <div className="editor-section-header">
-        <strong>{title}</strong>
-        <Button size="small" onClick={() => onChange([...safeRows, newPair()])}>添加行</Button>
-      </div>
-      {!safeRows.length && <div className="table-empty-state">空表格，点击添加行按钮以新增数据。</div>}
-      {!!safeRows.length && (
-        <div className="kv-table">
-          {safeRows.map((row, index) => (
-            <div className="kv-row" key={row.id || index}>
-              <input type="checkbox" checked={row.enabled} onChange={(event) => onChange(updateArrayRow(safeRows, index, { enabled: event.target.checked }))} />
-              <Input value={row.key} placeholder="Key" onChange={(_, data) => onChange(updateArrayRow(safeRows, index, { key: data.value }))} />
-              <Input value={row.value} placeholder="Value" onChange={(_, data) => onChange(updateArrayRow(safeRows, index, { value: data.value }))} />
-              <Button appearance="subtle" icon={<DeleteRegular />} onClick={() => onChange(safeRows.filter((item) => item.id !== row.id))} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -3977,17 +5271,20 @@ function HistoryTitle({ item, servers, collections }) {
   )
 }
 
-function EmptyState({ text, icon = null, fill = false }) {
-  return (
-    <div className={`empty-state ${fill ? 'empty-state-fill' : ''}`.trim()}>
-      {icon ? <div className="empty-state-icon" aria-hidden="true">{icon}</div> : null}
-      <div>{text}</div>
-    </div>
-  )
-}
-
 function normalizeBootstrap(data) {
   const fallback = createDefaultBootstrap()
+  const manager = {
+    ...fallback.workspaceManager,
+    ...(data?.workspaceManager || {}),
+    workspaces: (data?.workspaceManager?.workspaces || fallback.workspaceManager.workspaces).map((workspace) => ({
+      ...fallback.workspaceManager.workspaces[0],
+      ...workspace,
+    })),
+  }
+  const activeWorkspace = {
+    ...fallback.activeWorkspace,
+    ...(data?.activeWorkspace || {}),
+  }
   return {
     ...fallback,
     ...data,
@@ -4006,6 +5303,8 @@ function normalizeBootstrap(data) {
       mcp: { ...fallback.history.mcp, ...(data?.history?.mcp || {}) },
     },
     settings: normalizeSettings(data?.settings, fallback.settings),
+    workspaceManager: manager,
+    activeWorkspace: activeWorkspace,
   }
 }
 
@@ -4034,6 +5333,21 @@ function normalizeSettings(settings, fallback) {
   if (!themeColors.includes(normalizedThemeColor)) {
     themeColors.push(normalizedThemeColor)
   }
+  const collectionFolderExpanded = {}
+  if (merged.collectionFolderExpanded && typeof merged.collectionFolderExpanded === 'object') {
+    Object.entries(merged.collectionFolderExpanded).forEach(([workspaceID, folderMap]) => {
+      if (!workspaceID || !folderMap || typeof folderMap !== 'object') {
+        return
+      }
+      collectionFolderExpanded[workspaceID] = {}
+      Object.entries(folderMap).forEach(([folderID, expanded]) => {
+        if (!folderID) {
+          return
+        }
+        collectionFolderExpanded[workspaceID][folderID] = Boolean(expanded)
+      })
+    })
+  }
   return {
     ...merged,
     httpVersion: merged.httpVersion === 'HTTP/2' ? 'HTTP/2' : 'HTTP/1.1',
@@ -4046,6 +5360,7 @@ function normalizeSettings(settings, fallback) {
     themeMode: ['light', 'dark', 'system'].includes(merged.themeMode) ? merged.themeMode : 'system',
     themeColors,
     languageDetection: ['Auto', 'zh-CN', 'en-US'].includes(merged.languageDetection) ? merged.languageDetection : 'Auto',
+    collectionFolderExpanded,
   }
 }
 

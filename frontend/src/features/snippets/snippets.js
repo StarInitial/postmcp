@@ -1,4 +1,4 @@
-import { parseJson } from './defaults'
+import { parseJson } from '../workbench/lib/defaults'
 
 const escapeString = (value = '') => value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
 

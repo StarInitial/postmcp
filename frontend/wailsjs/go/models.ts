@@ -1,5 +1,81 @@
 export namespace main {
 	
+	export class WorkspaceDescriptor {
+	    id: string;
+	    name: string;
+	    description: string;
+	    path: string;
+	    creator: string;
+	    gitUrl: string;
+	    gitBranch: string;
+	    includeHistoryInGit: boolean;
+	    readOnly: boolean;
+	    createdAt: string;
+	    updatedAt: string;
+	    lastOpenedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceDescriptor(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.path = source["path"];
+	        this.creator = source["creator"];
+	        this.gitUrl = source["gitUrl"];
+	        this.gitBranch = source["gitBranch"];
+	        this.includeHistoryInGit = source["includeHistoryInGit"];
+	        this.readOnly = source["readOnly"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.lastOpenedAt = source["lastOpenedAt"];
+	    }
+	}
+	export class WorkspaceManagerStore {
+	    version: number;
+	    updatedAt: string;
+	    maxWorkspaceCount: number;
+	    multiWorkspaceEnabled: boolean;
+	    gitEnabled: boolean;
+	    activeWorkspaceId: string;
+	    workspaces: WorkspaceDescriptor[];
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceManagerStore(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.updatedAt = source["updatedAt"];
+	        this.maxWorkspaceCount = source["maxWorkspaceCount"];
+	        this.multiWorkspaceEnabled = source["multiWorkspaceEnabled"];
+	        this.gitEnabled = source["gitEnabled"];
+	        this.activeWorkspaceId = source["activeWorkspaceId"];
+	        this.workspaces = this.convertValues(source["workspaces"], WorkspaceDescriptor);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class SettingsStore {
 	    version: number;
 	    updatedAt: string;
@@ -26,6 +102,7 @@ export namespace main {
 	    themeColor: string;
 	    themeMode: string;
 	    themeColors: string[];
+	    collectionFolderExpanded: Record<string, any>;
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsStore(source);
@@ -58,6 +135,7 @@ export namespace main {
 	        this.themeColor = source["themeColor"];
 	        this.themeMode = source["themeMode"];
 	        this.themeColors = source["themeColors"];
+	        this.collectionFolderExpanded = source["collectionFolderExpanded"];
 	    }
 	}
 	export class HistoryItem {
@@ -884,6 +962,8 @@ export namespace main {
 	    mcpServers: MCPServerStore;
 	    history: CombinedHistoryStore;
 	    settings: SettingsStore;
+	    workspaceManager: WorkspaceManagerStore;
+	    activeWorkspace: WorkspaceDescriptor;
 	    loadedAt: string;
 	
 	    static createFrom(source: any = {}) {
@@ -897,6 +977,8 @@ export namespace main {
 	        this.mcpServers = this.convertValues(source["mcpServers"], MCPServerStore);
 	        this.history = this.convertValues(source["history"], CombinedHistoryStore);
 	        this.settings = this.convertValues(source["settings"], SettingsStore);
+	        this.workspaceManager = this.convertValues(source["workspaceManager"], WorkspaceManagerStore);
+	        this.activeWorkspace = this.convertValues(source["activeWorkspace"], WorkspaceDescriptor);
 	        this.loadedAt = source["loadedAt"];
 	    }
 	
@@ -1124,7 +1206,242 @@ export namespace main {
 	
 	
 	
+	export class WorkspaceCreateRequest {
+	    name: string;
+	    description: string;
+	    creator: string;
+	    path: string;
+	    mode: string;
+	    importSource: string;
+	    gitUrl: string;
+	    gitBranch: string;
+	    includeHistoryInGit: boolean;
 	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceCreateRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.creator = source["creator"];
+	        this.path = source["path"];
+	        this.mode = source["mode"];
+	        this.importSource = source["importSource"];
+	        this.gitUrl = source["gitUrl"];
+	        this.gitBranch = source["gitBranch"];
+	        this.includeHistoryInGit = source["includeHistoryInGit"];
+	    }
+	}
+	export class WorkspaceDeleteRequest {
+	    id: string;
+	    deleteLocalFiles: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceDeleteRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.deleteLocalFiles = source["deleteLocalFiles"];
+	    }
+	}
+	export class WorkspaceDeleteResult {
+	    manager: WorkspaceManagerStore;
+	    fileDeleteError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceDeleteResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manager = this.convertValues(source["manager"], WorkspaceManagerStore);
+	        this.fileDeleteError = source["fileDeleteError"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class WorkspaceFeatureSettingsRequest {
+	    multiWorkspaceEnabled: boolean;
+	    gitEnabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceFeatureSettingsRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.multiWorkspaceEnabled = source["multiWorkspaceEnabled"];
+	        this.gitEnabled = source["gitEnabled"];
+	    }
+	}
+	export class WorkspaceGitActionResult {
+	    workspaceId: string;
+	    branch: string;
+	    summary: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceGitActionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspaceId = source["workspaceId"];
+	        this.branch = source["branch"];
+	        this.summary = source["summary"];
+	        this.error = source["error"];
+	    }
+	}
+	export class WorkspaceGitCheckResult {
+	    available: boolean;
+	    version: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceGitCheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.version = source["version"];
+	        this.error = source["error"];
+	    }
+	}
+	export class WorkspaceGitDetectionResult {
+	    gitUrl: string;
+	    gitBranch: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceGitDetectionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gitUrl = source["gitUrl"];
+	        this.gitBranch = source["gitBranch"];
+	    }
+	}
+	export class WorkspaceGitResourceChange {
+	    path: string;
+	    status: string;
+	    resource: string;
+	    selected: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceGitResourceChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.status = source["status"];
+	        this.resource = source["resource"];
+	        this.selected = source["selected"];
+	    }
+	}
+	
+	export class WorkspacePushPreview {
+	    workspaceId: string;
+	    changes: WorkspaceGitResourceChange[];
+	    branch: string;
+	    remote: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspacePushPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspaceId = source["workspaceId"];
+	        this.changes = this.convertValues(source["changes"], WorkspaceGitResourceChange);
+	        this.branch = source["branch"];
+	        this.remote = source["remote"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class WorkspacePushRequest {
+	    workspaceId: string;
+	    branch: string;
+	    message: string;
+	    paths: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspacePushRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workspaceId = source["workspaceId"];
+	        this.branch = source["branch"];
+	        this.message = source["message"];
+	        this.paths = source["paths"];
+	    }
+	}
+	
+	
+	export class WorkspaceUpdateRequest {
+	    id: string;
+	    name: string;
+	    description: string;
+	    creator: string;
+	    gitUrl: string;
+	    gitBranch: string;
+	    includeHistoryInGit: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceUpdateRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.creator = source["creator"];
+	        this.gitUrl = source["gitUrl"];
+	        this.gitBranch = source["gitBranch"];
+	        this.includeHistoryInGit = source["includeHistoryInGit"];
+	    }
+	}
 
 }
 

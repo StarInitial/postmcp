@@ -211,9 +211,62 @@ export function createDefaultBootstrap() {
       themeColor: '#0f6cbd',
       themeMode: 'system',
       themeColors: ['#0f6cbd', '#d13438', '#0078d4', '#107c10', '#ff8c00', '#8764b8'],
+      collectionFolderExpanded: {},
+    },
+    workspaceManager: {
+      version: 1,
+      updatedAt: '',
+      maxWorkspaceCount: 3,
+      multiWorkspaceEnabled: false,
+      gitEnabled: false,
+      activeWorkspaceId: 'default',
+      workspaces: [
+        {
+          id: 'default',
+          name: '默认',
+          description: '系统默认工作空间',
+          path: '',
+          creator: '',
+          gitUrl: '',
+          gitBranch: 'main',
+          includeHistoryInGit: false,
+          readOnly: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastOpenedAt: new Date().toISOString(),
+        },
+      ],
+    },
+    activeWorkspace: {
+      id: 'default',
+      name: '默认',
+      description: '系统默认工作空间',
+      path: '',
+      creator: '',
+      gitUrl: '',
+      gitBranch: 'main',
+      includeHistoryInGit: false,
+      readOnly: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastOpenedAt: new Date().toISOString(),
     },
     loadedAt: new Date().toISOString(),
   }
+}
+
+export function createWorkspaceSlot(name = '未命名工作空间') {
+  return {
+    id: uuid(),
+    name,
+    path: '',
+    lastOpened: new Date().toISOString(),
+  }
+}
+
+export function getDefaultWorkspaceSlots() {
+  const defaultSlot = createWorkspaceSlot('默认')
+  return [defaultSlot]
 }
 
 export function ensureTrailingBlankPair(items = []) {
