@@ -281,6 +281,7 @@ function App() {
   const statusMessageChangedAtRef = useRef(0)
   const modalActivatedAtRef = useRef(0)
   const dialogResetTimersRef = useRef({})
+  const previousServerProbeSignaturesRef = useRef({})
   const [activeRequest, setActiveRequest] = useState(null)
 
   function useDialogReset(dialogName, isOpen) {
@@ -617,10 +618,10 @@ function App() {
     [enabledMcpServers, activeTab],
   )
 
-  const serverProbeSignature = useMemo(
-    () => bootstrap.mcpServers.servers
-      .map((server) => [
-        server.id,
+  const serverProbeSignatures = useMemo(() => {
+    const signatures = {}
+    bootstrap.mcpServers.servers.forEach((server) => {
+      signatures[server.id] = [
         server.name,
         server.transport,
         server.command,
@@ -631,10 +632,10 @@ function App() {
         JSON.stringify(server.env || []),
         String(server.timeoutMs),
         server.disabled ? '1' : '0',
-      ].join('|'))
-      .join('||'),
-    [bootstrap.mcpServers.servers],
-  )
+      ].join('|')
+    })
+    return signatures
+  }, [bootstrap.mcpServers.servers])
 
   const currentDiscovery = discoveries[currentServer?.id] || {
     tools: currentServer?.toolCache || [],
@@ -712,12 +713,27 @@ function App() {
   }, [bootstrap.mcpServers.servers])
 
   useEffect(() => {
-    if (loading || !hasBackend() || !serverProbeSignature) {
+    if (loading || !hasBackend()) {
       return
     }
 
-    void probeAllServersStatus()
-  }, [loading, serverProbeSignature])
+    const currentSignatures = serverProbeSignatures
+    const currentServerIds = Object.keys(currentSignatures)
+    if (!currentServerIds.length) {
+      previousServerProbeSignaturesRef.current = currentSignatures
+      return
+    }
+
+    const previousSignatures = previousServerProbeSignaturesRef.current
+    const changedServerIds = currentServerIds.filter((serverId) => previousSignatures[serverId] !== currentSignatures[serverId])
+    previousServerProbeSignaturesRef.current = currentSignatures
+
+    if (!changedServerIds.length) {
+      return
+    }
+
+    void probeServersStatus(changedServerIds, { selectFirstTool: true })
+  }, [loading, serverProbeSignatures])
 
   function setWorkspace(updater) {
     setBootstrap((previous) => ({
@@ -1581,9 +1597,18 @@ function App() {
     }
   }
 
+  async function probeServersStatus(serverIds, options = {}) {
+    const uniqueServerIds = [...new Set(serverIds.filter(Boolean))]
+    if (!uniqueServerIds.length) {
+      return
+    }
+
+    await Promise.allSettled(uniqueServerIds.map((serverId) => probeServerStatus(serverId, options)))
+  }
+
   async function probeAllServersStatus() {
     const serverIds = bootstrap.mcpServers.servers.map((server) => server.id)
-    await Promise.allSettled(serverIds.map((serverId) => probeServerStatus(serverId, { selectFirstTool: true })))
+    await probeServersStatus(serverIds, { selectFirstTool: true })
   }
 
   async function sendHttpRequest() {
@@ -4808,7 +4833,6 @@ function ResponsePanelHTTP({ response, editorSettings, onOpenResolvedURL }) {
               </div>
 
               <div className="response-body-toolbar-actions">
-                <Button appearance="subtle" title="基于最终 URL 新建请求" onClick={() => onOpenResolvedURL?.(response.resolvedUrl)} disabled={!response.resolvedUrl}>打开 URL</Button>
                 <Button appearance="subtle" icon={<CopyRegular />} title="复制" aria-label="复制响应体" onClick={copyResponseBody} />
                 <Button appearance="subtle" icon={<SearchRegular />} title="搜索" aria-label="搜索响应体" onClick={searchResponseBody} />
                 <Button appearance="subtle" icon={<SaveRegular />} title="保存为文件" aria-label="保存响应体为文件" onClick={saveResponseBodyToFile} />
@@ -5278,7 +5302,7 @@ function ResponsePanelMCP({ response, editorSettings }) {
     return (
       <div className="response-shell response-shell-mcp">
         <EmptyState
-          text="运行工具后，可在此查看 Text、JSON、XML 三种响应视图和执行元数据。"
+          text="运行工具后，可在此查看MCP工具响应"
           icon={<StickerRegular />}
           fill
         />

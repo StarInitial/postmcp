@@ -37,12 +37,32 @@ func (a *App) DiscoverMCPServer(serverID string) (*MCPDiscoverResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), normalizedTimeout(server.TimeoutMs))
 	defer cancel()
 
-	tools, err := listAllTools(ctx, managed.session)
-	if err != nil {
-		return &MCPDiscoverResult{ServerID: serverID, Error: err.Error()}, nil
+	var (
+		tools     []MCPTool
+		prompts   []MCPPrompt
+		resources []MCPResource
+		toolsErr  error
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		tools, toolsErr = listAllTools(ctx, managed.session)
+	}()
+	go func() {
+		defer wg.Done()
+		prompts, _ = listAllPrompts(ctx, managed.session)
+	}()
+	go func() {
+		defer wg.Done()
+		resources, _ = listAllResources(ctx, managed.session)
+	}()
+	wg.Wait()
+
+	if toolsErr != nil {
+		return &MCPDiscoverResult{ServerID: serverID, Error: toolsErr.Error()}, nil
 	}
-	prompts, _ := listAllPrompts(ctx, managed.session)
-	resources, _ := listAllResources(ctx, managed.session)
 
 	result := &MCPDiscoverResult{
 		ServerID:   serverID,
@@ -249,11 +269,11 @@ func (a *App) ImportMCPServers(raw string) (*MCPServerImportResult, error) {
 
 func (a *App) ensureMCPSession(server MCPServerConfig) (*managedMCPSession, error) {
 	a.mcpMu.Lock()
-	defer a.mcpMu.Unlock()
-
 	if managed, ok := a.sessions[server.ID]; ok && managed.session != nil {
+		a.mcpMu.Unlock()
 		return managed, nil
 	}
+	a.mcpMu.Unlock()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "post-mcp", Version: "0.1.0"}, nil)
 	httpClient := &http.Client{Timeout: normalizedTimeout(server.TimeoutMs), Transport: newHeaderRoundTripper(server.Headers)}
@@ -284,6 +304,14 @@ func (a *App) ensureMCPSession(server MCPServerConfig) (*managedMCPSession, erro
 	}
 
 	managed := &managedMCPSession{server: server, client: client, session: session, httpClient: httpClient}
+	a.mcpMu.Lock()
+	defer a.mcpMu.Unlock()
+	if existing, ok := a.sessions[server.ID]; ok && existing.session != nil {
+		if managed.session != nil {
+			_ = managed.session.Close()
+		}
+		return existing, nil
+	}
 	a.sessions[server.ID] = managed
 	return managed, nil
 }
