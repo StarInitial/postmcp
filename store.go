@@ -468,9 +468,7 @@ func historyFileName(item HistoryItem) string {
 	if status == "" {
 		status = "na"
 	}
-	title := encodeHistoryMeta(item.Title)
-	subtitle := encodeHistoryMeta(item.Subtitle)
-	return fmt.Sprintf("%s__%s__%s__%d__%s__%s.json", ts, item.ID, status, item.DurationMs, title, subtitle)
+	return fmt.Sprintf("%s__%s__%s__%d.json", ts, item.ID, status, item.DurationMs)
 }
 
 func compactHistoryTimestamp(raw string) string {
@@ -500,14 +498,11 @@ func parseHistoryFileName(name string, mode string) (HistoryItem, bool) {
 		return HistoryItem{}, false
 	}
 	trimmed := strings.TrimSuffix(name, filepath.Ext(name))
-	parts := strings.SplitN(trimmed, "__", 6)
-	if len(parts) != 6 {
+	parts := strings.Split(trimmed, "__")
+	if len(parts) != 4 && len(parts) != 6 {
 		return HistoryItem{}, false
 	}
 	duration, _ := strconv.ParseInt(parts[3], 10, 64)
-	if !strings.HasPrefix(parts[4], "h-") || !strings.HasPrefix(parts[5], "h-") {
-		return HistoryItem{}, false
-	}
 	timeValue := ""
 	if parsed, err := time.Parse("20060102T150405.000Z", parts[0]); err == nil {
 		timeValue = parsed.UTC().Format(time.RFC3339)
@@ -515,15 +510,21 @@ func parseHistoryFileName(name string, mode string) (HistoryItem, bool) {
 	if timeValue == "" {
 		timeValue = time.Now().UTC().Format(time.RFC3339)
 	}
-	return HistoryItem{
+	item := HistoryItem{
 		ID:         parts[1],
 		Mode:       mode,
 		Status:     parts[2],
 		DurationMs: duration,
-		Title:      decodeHistoryMeta(parts[4]),
-		Subtitle:   decodeHistoryMeta(parts[5]),
 		Timestamp:  timeValue,
-	}, true
+	}
+	if len(parts) == 6 {
+		if !strings.HasPrefix(parts[4], "h-") || !strings.HasPrefix(parts[5], "h-") {
+			return HistoryItem{}, false
+		}
+		item.Title = decodeHistoryMeta(parts[4])
+		item.Subtitle = decodeHistoryMeta(parts[5])
+	}
+	return item, true
 }
 
 func decodeHistoryMeta(raw string) string {
@@ -555,19 +556,8 @@ func readHistoryStoreFromDir(dataDir string, mode string) (HistoryStore, error) 
 		if entry.IsDir() {
 			continue
 		}
-		item, ok := parseHistoryFileName(entry.Name(), mode)
+		item, ok := readHistoryEntry(filepath.Join(dir, entry.Name()), entry.Name(), mode)
 		if !ok {
-			stored := HistoryItem{}
-			if err := readJSONFile(filepath.Join(dir, entry.Name()), &stored); err != nil {
-				continue
-			}
-			if strings.TrimSpace(stored.ID) == "" {
-				continue
-			}
-			if strings.TrimSpace(stored.Mode) == "" {
-				stored.Mode = mode
-			}
-			items = append(items, stored)
 			continue
 		}
 		items = append(items, item)
@@ -578,6 +568,33 @@ func readHistoryStoreFromDir(dataDir string, mode string) (HistoryStore, error) 
 	})
 
 	return HistoryStore{Version: currentSchemaVersion, Items: items, UpdatedAt: time.Now().Format(time.RFC3339)}, nil
+}
+
+func readHistoryEntry(path string, name string, mode string) (HistoryItem, bool) {
+	item, ok := parseHistoryFileName(name, mode)
+	stored := HistoryItem{}
+	if err := readJSONFile(path, &stored); err == nil && strings.TrimSpace(stored.ID) != "" {
+		if strings.TrimSpace(stored.Mode) == "" {
+			stored.Mode = mode
+		}
+		if !ok {
+			return stored, true
+		}
+		if strings.TrimSpace(stored.Timestamp) == "" {
+			stored.Timestamp = item.Timestamp
+		}
+		if strings.TrimSpace(stored.Status) == "" {
+			stored.Status = item.Status
+		}
+		if stored.DurationMs == 0 {
+			stored.DurationMs = item.DurationMs
+		}
+		return stored, true
+	}
+	if !ok {
+		return HistoryItem{}, false
+	}
+	return item, true
 }
 
 func writeHistoryStoreToDir(dataDir string, mode string, store HistoryStore) error {
@@ -647,15 +664,11 @@ func readHistoryItemFromDir(dataDir string, mode string, id string) (HistoryItem
 		if entry.IsDir() {
 			continue
 		}
-		item, ok := parseHistoryFileName(entry.Name(), mode)
+		item, ok := readHistoryEntry(filepath.Join(dir, entry.Name()), entry.Name(), mode)
 		if !ok || item.ID != id {
 			continue
 		}
-		stored := HistoryItem{}
-		if err := readJSONFile(filepath.Join(dir, entry.Name()), &stored); err != nil {
-			return HistoryItem{}, err
-		}
-		return stored, nil
+		return item, nil
 	}
 	return HistoryItem{}, fmt.Errorf("history item not found: %s", id)
 }
@@ -670,7 +683,7 @@ func deleteHistoryItemFromDir(dataDir string, mode string, id string) error {
 		if entry.IsDir() {
 			continue
 		}
-		item, ok := parseHistoryFileName(entry.Name(), mode)
+		item, ok := readHistoryEntry(filepath.Join(dir, entry.Name()), entry.Name(), mode)
 		if !ok || item.ID != id {
 			continue
 		}
@@ -689,7 +702,7 @@ func deleteHistoryDayFromDir(dataDir string, mode string, dayKey string) error {
 		if entry.IsDir() {
 			continue
 		}
-		item, ok := parseHistoryFileName(entry.Name(), mode)
+		item, ok := readHistoryEntry(filepath.Join(dir, entry.Name()), entry.Name(), mode)
 		if !ok {
 			continue
 		}

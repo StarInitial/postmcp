@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "Cherry-OpenAI": {
+      "npm": "@ai-sdk/openai",
+      "name": "Cherry-OpenAI",
+      "options": {
+        "apiKey": "{env:OPENCODE_API_KEY_OPENAI}",
+        "baseURL": "https://api.claudecode.net.cn/api/codex/backend-api/codex/v1"
+      },
+      "models": {
+        "gpt-5.3-codex": {
+          "name": "gpt-5.3-codex",
+          "reasoning": true,
+          "options": {
+            "reasoningEffort": "medium"
+          }
+        }
+      }
+    }
+  }
+}
