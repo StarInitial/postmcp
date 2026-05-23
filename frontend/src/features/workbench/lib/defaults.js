@@ -69,7 +69,11 @@ export function createDefaultHttpRequest() {
       username: '',
       password: '',
       token: '',
+      apiKeyKey: '',
+      apiKeyValue: '',
+      apiKeyIn: 'header',
     },
+    disabledAutoFields: [],
     body: {
       mode: 'none',
       contentType: 'application/json',

@@ -41,6 +41,7 @@ import {
   PopoverTrigger,
   Tooltip,
   Label,
+  ProgressBar,
 } from '@fluentui/react-components'
 import 'monaco-editor/esm/nls.messages.zh-cn.js'
 import Editor, { loader } from '@monaco-editor/react'
@@ -77,6 +78,8 @@ import {
   WrenchRegular,
   StorageRegular,
   ArrowLeftRegular,
+  PanelLeftContractRegular,
+  PanelLeftExpandRegular,
 } from '@fluentui/react-icons'
 import './App.css'
 import EmptyState from '../../components/EmptyState'
@@ -166,6 +169,9 @@ const snippetLanguages = {
   http: ['curl', 'fetch', 'go', 'python', 'axios'],
   mcp: ['json', 'typescript', 'python'],
 }
+const sidebarMinWidth = 280
+const sidebarMaxWidth = sidebarMinWidth * 2
+const sidebarCollapsedWidth = 72
 
 function App() {
   const toasterId = 'mcp-server-refresh-toaster'
@@ -181,6 +187,11 @@ function App() {
   const [workspaceSlots, setWorkspaceSlots] = useState(getDefaultWorkspaceSlots())
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(workspaceSlots[0]?.id || '')
   const [sidebarTab, setSidebarTab] = useState('collections')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(sidebarMinWidth)
+  const [sidebarResizing, setSidebarResizing] = useState(false)
+  const [sidebarTransitioning, setSidebarTransitioning] = useState(false)
+  const [sidebarFloatingTab, setSidebarFloatingTab] = useState('')
   const [expandedFolders, setExpandedFolders] = useState({})
   const [collectionSaveDialogOpen, setCollectionSaveDialogOpen] = useState(false)
   const [collectionSaveDraft, setCollectionSaveDraft] = useState({ name: '', folderId: collectionRootValue })
@@ -278,6 +289,8 @@ function App() {
   const closeConfirmSaveActionRef = useRef(null)
   const collectionSaveAfterActionRef = useRef(null)
   const splitDragRef = useRef(null)
+  const sidebarResizeRef = useRef(null)
+  const sidebarTransitionTimerRef = useRef(null)
   const statusMessageChangedAtRef = useRef(0)
   const modalActivatedAtRef = useRef(0)
   const dialogResetTimersRef = useRef({})
@@ -491,8 +504,29 @@ function App() {
   )
   const isHttpRequestActive = activeRequest?.kind === 'http' && activeRequest?.tabID === activeTab?.id
   const isMcpRequestActive = activeRequest?.kind === 'mcp' && activeRequest?.tabID === activeTab?.id
+  const autoHttpFields = buildHttpAutoFields(activeTab?.http)
   const workspaceMaxCount = Math.max(1, Number(bootstrap.workspaceManager?.maxWorkspaceCount) || 3)
   const workspaceUsagePercent = Math.min(100, (mockWorkspaces.length / workspaceMaxCount) * 100)
+  const effectiveSidebarWidth = sidebarCollapsed ? sidebarCollapsedWidth : sidebarWidth
+  const sidebarQuickTabs = useMemo(() => ([
+    { value: 'collections', label: '收藏集', icon: <FolderRegular /> },
+    { value: 'servers', label: 'MCP 服务器', icon: <PlugConnectedRegular /> },
+    { value: 'history', label: '历史记录', icon: <StorageRegular /> },
+  ]), [])
+
+  useEffect(() => {
+    if (!activeTab || activeTab.mode !== modes.http) {
+      return
+    }
+    const syncedURL = syncURLWithQueryRows(activeTab.http.url, activeTab.http.query, activeTab.http)
+    if (syncedURL === activeTab.http.url) {
+      return
+    }
+    patchActiveTab((tab) => {
+      tab.http.url = syncedURL
+      return tab
+    })
+  }, [activeTab?.id, activeTab?.mode, activeTab?.lastUpdatedAt])
 
   useEffect(() => {
     const container = tabsContainerRef.current
@@ -601,6 +635,45 @@ function App() {
       window.removeEventListener('pointerup', handlePointerUp)
     }
   }, [editorResizing])
+
+  useEffect(() => {
+    if (!sidebarResizing) {
+      return undefined
+    }
+
+    function handlePointerMove(event) {
+      const drag = sidebarResizeRef.current
+      if (!drag) {
+        return
+      }
+      const nextWidth = Math.min(Math.max(event.clientX - drag.left, sidebarMinWidth), sidebarMaxWidth)
+      setSidebarWidth(nextWidth)
+    }
+
+    function handlePointerUp() {
+      sidebarResizeRef.current = null
+      setSidebarResizing(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [sidebarResizing])
+
+  useEffect(() => {
+    if (!sidebarCollapsed) {
+      setSidebarFloatingTab('')
+    }
+  }, [sidebarCollapsed])
+
+  useEffect(() => () => {
+    if (sidebarTransitionTimerRef.current) {
+      clearTimeout(sidebarTransitionTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     setThemeColorDraft(normalizeHexColor(settingsForm.themeColor))
@@ -1196,6 +1269,7 @@ function App() {
       name: tab.title || (tab.mode === modes.http ? '新建 HTTP 请求' : '新建 MCP 调用'),
       mode: tab.mode,
       payload: tab,
+      tabId: tab.id,
     })
   }
 
@@ -1377,6 +1451,50 @@ function App() {
   function updateHttpRequest(path, value) {
     patchActiveTab((tab) => {
       tab.http = updateNested(tab.http, path, value)
+      return tab
+    })
+  }
+
+  function handleHttpURLChange(value) {
+    patchActiveTab((tab) => {
+      const nextURL = String(value || '')
+      const parsedQueryRows = parseQueryRowsFromURL(nextURL)
+      tab.http.url = nextURL
+      if (parsedQueryRows) {
+        tab.http.query = filterOutAutoQueryRows(parsedQueryRows, tab.http)
+      }
+      return tab
+    })
+  }
+
+  function handleHttpQueryChange(rows) {
+    patchActiveTab((tab) => {
+      const nextRows = (rows || []).map((item) => ({ ...newPair(), ...item }))
+      tab.http.query = nextRows
+      tab.http.url = syncURLWithQueryRows(tab.http.url, nextRows, tab.http)
+      return tab
+    })
+  }
+
+  function handleHttpAuthChange(path, value) {
+    patchActiveTab((tab) => {
+      tab.http.auth = updateNested(tab.http.auth, path, value)
+      tab.http.url = syncURLWithQueryRows(tab.http.url, tab.http.query, tab.http)
+      return tab
+    })
+  }
+
+  function toggleHttpAutoField(fieldID, enabled) {
+    patchActiveTab((tab) => {
+      const disabled = new Set(tab.http.disabledAutoFields || [])
+      const normalizedFieldID = normalizeAutoFieldKey(fieldID)
+      if (enabled) {
+        disabled.delete(normalizedFieldID)
+      } else {
+        disabled.add(normalizedFieldID)
+      }
+      tab.http.disabledAutoFields = [...disabled]
+      tab.http.url = syncURLWithQueryRows(tab.http.url, tab.http.query, tab.http)
       return tab
     })
   }
@@ -1618,7 +1736,7 @@ function App() {
     }
 
     const request = beginCancelableRequest('http', activeTab.id)
-    const requestPayload = activeTab.http
+    const requestPayload = buildEffectiveHttpRequest(activeTab.http)
     setStatusMessage('正在发送 HTTP 请求...')
     try {
       const response = await invokeBackend('ExecuteHTTP', requestPayload)
@@ -1893,6 +2011,7 @@ function App() {
       name: activeTab.title || (activeTab.mode === modes.http ? '新建 HTTP 请求' : '新建 MCP 调用'),
       mode: activeTab.mode,
       payload: activeTab,
+      tabId: activeTab.id,
     })
   }
 
@@ -1901,6 +2020,7 @@ function App() {
       return
     }
 
+    const sourceTabId = String(collectionSaveSource.tabId || '')
     const node = createCollectionRequest(
       collectionSaveDraft.name.trim() || collectionSaveSource.name,
       collectionSaveSource.mode,
@@ -1913,6 +2033,19 @@ function App() {
     if (collectionSaveDraft.folderId && collectionSaveDraft.folderId !== collectionRootValue) {
       setExpandedFolders((previous) => ({ ...previous, [collectionSaveDraft.folderId]: true }))
       persistFolderExpandedState(collectionSaveDraft.folderId, true)
+    }
+    if (sourceTabId) {
+      setWorkspace((workspace) => ({
+        ...workspace,
+        tabs: workspace.tabs.map((tab) => (tab.id === sourceTabId
+          ? {
+            ...tab,
+            linkedNodeId: node.id,
+            title: node.name,
+            lastUpdatedAt: new Date().toISOString(),
+          }
+          : tab)),
+      }))
     }
     setCollectionSaveDialogOpen(false)
     setCollectionFolderKeyword('')
@@ -1927,6 +2060,7 @@ function App() {
   }
 
   function addCollectionFolder(parentId = collectionRootValue) {
+    setCollectionContextMenu(null)
     const folder = createCollectionFolder()
     setCollections((store) => ({
       ...store,
@@ -2362,6 +2496,167 @@ function App() {
     event.preventDefault()
   }
 
+  function beginSidebarResize(event) {
+    if (sidebarCollapsed) {
+      return
+    }
+
+    sidebarResizeRef.current = {
+      left: event.currentTarget.parentElement.getBoundingClientRect().left,
+    }
+    setSidebarResizing(true)
+    event.preventDefault()
+  }
+
+  function toggleSidebarCollapsed(nextCollapsed) {
+    if (nextCollapsed === sidebarCollapsed) {
+      return
+    }
+
+    if (sidebarTransitionTimerRef.current) {
+      clearTimeout(sidebarTransitionTimerRef.current)
+    }
+
+    if (!nextCollapsed) {
+      setSidebarFloatingTab('')
+    }
+
+    setSidebarTransitioning(true)
+    setSidebarCollapsed(nextCollapsed)
+    sidebarTransitionTimerRef.current = setTimeout(() => {
+      setSidebarTransitioning(false)
+      sidebarTransitionTimerRef.current = null
+    }, 240)
+  }
+
+  function renderSidebarPanelContent(targetTab, options = {}) {
+    const panelClassName = options.floating ? 'sidebar-tab-panel sidebar-tab-panel-floating' : 'sidebar-tab-panel'
+
+    return (
+      <div className={panelClassName}>
+        {targetTab === 'collections' && (
+          <>
+            <div className="section-toolbar">
+              <Button size="small" icon={<SaveRegular />} onClick={openSaveCurrentDialog}>
+                保存当前
+              </Button>
+              <Button size="small" onClick={() => addCollectionFolder()}>
+                新建文件夹
+              </Button>
+            </div>
+            <div className={`stack-list collection-tree-root ${collectionDragState.targetId === collectionRootValue ? 'root-drop-active' : ''}`} onDragOver={handleCollectionRootDragOver} onDrop={(event) => handleCollectionDrop(event, collectionRootValue, 'root')}>
+              <CollectionTree
+                nodes={bootstrap.collections.items}
+                expandedFolders={expandedFolders}
+                dragState={collectionDragState}
+                renamingFolderId={inlineRenameFolder.id}
+                renamingFolderDraft={inlineRenameFolder.draft}
+                onContextMenu={handleCollectionContextMenu}
+                onDragEnd={clearCollectionDragState}
+                onDragOver={handleCollectionDragOver}
+                onDragStart={handleCollectionDragStart}
+                onDrop={handleCollectionDrop}
+                onOpenRequest={openCollectionRequest}
+                onRenameFolderCancel={cancelInlineRenameFolder}
+                onRenameFolderChange={(value) => setInlineRenameFolder((current) => ({ ...current, draft: value }))}
+                onRenameFolderConfirm={confirmInlineRenameFolder}
+                onToggleFolder={toggleCollectionFolder}
+              />
+            </div>
+          </>
+        )}
+
+        {targetTab === 'servers' && (
+          <>
+            <div className="section-toolbar">
+              <Button size="small" icon={<AddRegular />} onClick={() => { setServerDraft(createServerDraft()); setServerDialogOpen(true) }}>
+                添加
+              </Button>
+              <Button size="small" icon={<ArrowDownloadRegular />} onClick={() => { setImportError(''); setImportDialogOpen(true) }}>
+                导入 JSON
+              </Button>
+            </div>
+            <div className="stack-list">
+              {bootstrap.mcpServers.servers.map((server) => {
+                const status = serverStatuses[server.id] || createServerStatus('unknown')
+
+                return (
+                  <div className="list-card" key={server.id}>
+                    <div className="list-card-main">
+                      <strong>{server.name || '未命名服务器'}</strong>
+                      <Caption1>{server.transport}</Caption1>
+                    </div>
+                    <div className="list-card-actions">
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        className={`mcp-server-status-button mcp-server-status-button-${status.state}`}
+                        icon={<PlugConnectedRegular />}
+                        onClick={() => testServer(server.id)}
+                        title={describeServerStatus(status)}
+                      />
+                      <Button size="small" appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={() => discoverServer(server.id)} />
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<EditRegular />}
+                        onClick={() => { setServerDraft({ ...server, args: server.args || [], headers: normalizePairs(server.headers), env: normalizePairs(server.env) }); setServerDialogOpen(true) }}
+                        title="编辑"
+                      />
+                      <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => setServerDeleteTarget(server)} />
+                    </div>
+                  </div>
+                )
+              })}
+              {!bootstrap.mcpServers.servers.length && <EmptyState text="注册一个 MCP 服务器以解锁工具调试、提示检查和资源浏览功能。" />}
+            </div>
+          </>
+        )}
+
+        {targetTab === 'history' && (
+          <>
+            <div className="section-toolbar">
+              <Button size="small" appearance="secondary" icon={<DeleteRegular />} onClick={() => openHistoryDeleteDialog({ type: 'all' })} disabled={!allHistory.length}>
+                删除全部
+              </Button>
+            </div>
+            <div className="stack-list">
+              {!!groupedHistory.length && (
+                <Accordion className="history-accordion" collapsible multiple defaultOpenItems={groupedHistory.map((group) => group.dayKey)}>
+                  {groupedHistory.map((group) => (
+                    <AccordionItem key={group.dayKey} value={group.dayKey}>
+                      <AccordionHeader onContextMenu={(event) => handleHistoryContextMenu(event, { type: 'day', dayKey: group.dayKey, label: group.label })}>
+                        <div className="history-day-header">
+                          <span>{group.label}</span>
+                          <Badge appearance="outline">{group.items.length}</Badge>
+                        </div>
+                      </AccordionHeader>
+                      <AccordionPanel>
+                        <div className="history-day-list">
+                          {group.items.map((item) => (
+                            <button
+                              className="history-row"
+                              key={item.id}
+                              onClick={() => replayHistory(item)}
+                              onContextMenu={(event) => handleHistoryContextMenu(event, { type: 'item', item })}
+                            >
+                              <HistoryTitle item={item} servers={bootstrap.mcpServers.servers} collections={bootstrap.collections.items} />
+                            </button>
+                          ))}
+                        </div>
+                      </AccordionPanel>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              )}
+              {!allHistory.length && <EmptyState text="请求和 MCP 执行历史记录将显示在这里。" />}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <FluentProvider theme={fluentTheme}>
@@ -2374,271 +2669,228 @@ function App() {
 
   return (
     <FluentProvider theme={fluentTheme}>
-      <div className="app-shell" style={appThemeVars}>
-      <aside className="sidebar-panel">
-        <div className="sidebar-header">
-          <div className="workspace-dropdown-container">
-            {!workspaceEnabled ? (
-              <>
-                <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
-                <div className="workspace-title-static">PostMCP</div>
-              </>
-            ) : (
-            <>
-              <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
-              <Popover open={workspaceDropdownOpen} onOpenChange={(_, data) => setWorkspaceDropdownOpen(data.open)} positioning={{ position: 'below', align: 'start' }}>
-                <PopoverTrigger disableButtonStyle>
-                  <button className="workspace-dropdown-trigger" onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}>
-                    <span className="workspace-dropdown-icon"><WrenchRegular /></span>
-                    <span className="workspace-dropdown-content">
-                      <span className="workspace-dropdown-label">工作空间</span>
-                      <span className="workspace-dropdown-value">
-                        {workspaceSlots.find((ws) => ws.id === activeWorkspaceId)?.name || '默认'}
-                      </span>
-                    </span>
-                    <span className={`workspace-dropdown-arrow ${workspaceDropdownOpen ? 'open' : ''}`}><ChevronDownRegular /></span>
-                  </button>
-                </PopoverTrigger>
-              <PopoverSurface className="workspace-dropdown-surface">
-                <div className="workspace-dropdown-header">
-                  <div className="workspace-dropdown-search-row">
-                    <div className="workspace-search-wrapper">
-                      <SearchRegular className="workspace-search-icon" />
-                      <Input
-                        className="workspace-search-input"
-                        placeholder="搜索工作空间..."
-                        value={workspaceSearch}
-                        onChange={(_, data) => setWorkspaceSearch(data.value)}
-                      />
-                    </div>
-                    <Button
-                      size="small"
-                      appearance="primary"
-                      icon={<AddRegular />}
-                      className="workspace-dropdown-add-btn"
-                      title="新增工作区"
-                      aria-label="新增工作区"
-                      onClick={() => openCreateWorkspaceDialog({ closeDropdown: true })}
-                    />
-                  </div>
+      <div className="app-shell" style={{ ...appThemeVars, '--sidebar-width': `${effectiveSidebarWidth}px` }}>
+        <aside className={`sidebar-panel ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarResizing ? 'resizing' : ''} ${sidebarTransitioning ? 'is-transitioning' : ''}`.trim()}>
+          {!sidebarCollapsed ? (
+            <div className="sidebar-expanded-shell">
+              <div className="sidebar-header">
+                <div className="workspace-dropdown-container">
+                  {!workspaceEnabled ? (
+                    <>
+                      <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
+                      <div className="workspace-title-static">PostMCP</div>
+                    </>
+                  ) : (
+                    <>
+                      <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
+                      <Popover open={workspaceDropdownOpen} onOpenChange={(_, data) => setWorkspaceDropdownOpen(data.open)} positioning={{ position: 'below', align: 'start' }}>
+                        <PopoverTrigger disableButtonStyle>
+                          <button className="workspace-dropdown-trigger" onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}>
+                            <span className="workspace-dropdown-icon"><WrenchRegular /></span>
+                            <span className="workspace-dropdown-content">
+                              <span className="workspace-dropdown-label">工作空间</span>
+                              <span className="workspace-dropdown-value">
+                                {workspaceSlots.find((ws) => ws.id === activeWorkspaceId)?.name || '默认'}
+                              </span>
+                            </span>
+                            <span className={`workspace-dropdown-arrow ${workspaceDropdownOpen ? 'open' : ''}`}><ChevronDownRegular /></span>
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverSurface className="workspace-dropdown-surface">
+                          <div className="workspace-dropdown-header">
+                            <div className="workspace-dropdown-search-row">
+                              <div className="workspace-search-wrapper">
+                                <SearchRegular className="workspace-search-icon" />
+                                <Input
+                                  className="workspace-search-input"
+                                  placeholder="搜索工作空间..."
+                                  value={workspaceSearch}
+                                  onChange={(_, data) => setWorkspaceSearch(data.value)}
+                                />
+                              </div>
+                              <Button
+                                size="small"
+								style={{"minWidth":"30px"}}
+                                appearance="primary"
+                                icon={<AddRegular />}
+                                className="workspace-dropdown-add-btn"
+                                title="新增工作区"
+                                aria-label="新增工作区"
+                                onClick={() => openCreateWorkspaceDialog({ closeDropdown: true })}
+                              />
+                            </div>
+                          </div>
+                          <Divider />
+                          <div className="workspace-dropdown-list">
+                            {workspaceSlots
+                              .filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase()))
+                              .slice(0, 5)
+                              .map((workspace) => (
+                                <div
+                                  key={workspace.id}
+                                  className={`workspace-dropdown-item ${workspace.id === activeWorkspaceId ? 'active' : ''}`}
+                                  onClick={() => {
+                                    handleWorkspaceSwitch(workspace.id)
+                                  }}
+                                >
+                                  <span className="workspace-item-icon"><WrenchRegular /></span>
+                                  <div className="workspace-item-content">
+                                    <span className="workspace-item-name">{workspace.name}</span>
+                                    {workspace.path && <span className="workspace-item-path">{workspace.path}</span>}
+                                  </div>
+                                  <div className="workspace-item-actions">
+                                    {workspace.id === activeWorkspaceId && gitEnabled && (
+                                      <>
+                                        <button
+                                          className={`workspace-item-action-btn ${isWorkspacePushBusy(workspace.id) ? 'updating' : ''}`}
+                                          title={isWorkspacePushBusy(workspace.id) ? '正在处理推送…' : '推送'}
+                                          disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl || isWorkspacePushBusy(workspace.id)}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            openPushPreview(workspace)
+                                          }}
+                                        >
+                                          {isWorkspacePushBusy(workspace.id) ? (
+                                            <span className="update-icon-wrapper rotating">
+                                              <ArrowClockwiseRegular />
+                                            </span>
+                                          ) : (
+                                            <ArrowUpRegular />
+                                          )}
+                                        </button>
+                                        <button
+                                          className={`workspace-item-action-btn ${isWorkspaceUpdating(workspace.id) ? 'updating' : ''}`}
+                                          title="拉取"
+                                          disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            handleWorkspaceUpdate(workspace.id)
+                                          }}
+                                        >
+                                          {isWorkspaceUpdating(workspace.id) ? (
+                                            <span className="update-icon-wrapper rotating">
+                                              <ArrowClockwiseRegular />
+                                            </span>
+                                          ) : isWorkspaceUpdated(workspace.id) ? (
+                                            <span className="update-icon-success">
+                                              <CheckmarkCircleRegular />
+                                            </span>
+                                          ) : (
+                                            <ArrowClockwiseRegular />
+                                          )}
+                                        </button>
+                                      </>
+                                    )}
+                                    <button
+                                      className="workspace-item-action-btn"
+                                      title="配置"
+                                      disabled={workspaceOperationState.updatingId !== null || workspace.readOnly}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openWorkspaceConfigDialog(workspace)
+                                      }}
+                                    >
+                                      <SettingsRegular />
+                                    </button>
+                                  </div>
+                                  {workspace.id === activeWorkspaceId && <CheckRegular className="workspace-item-check" />}
+                                </div>
+                              ))}
+                            {workspaceSlots.filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase())).length === 0 && (
+                              <div className="workspace-dropdown-empty">暂无匹配的工作空间</div>
+                            )}
+                          </div>
+                        </PopoverSurface>
+                      </Popover>
+                    </>
+                  )}
                 </div>
-                <Divider />
-                <div className="workspace-dropdown-list">
-                  {workspaceSlots
-                    .filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase()))
-                    .slice(0, 5)
-                    .map((workspace) => (
-                      <div
-                        key={workspace.id}
-                        className={`workspace-dropdown-item ${workspace.id === activeWorkspaceId ? 'active' : ''}`}
+              </div>
+
+              <div className="sidebar-content-shell">
+                <TabList className="sidebar-tab-list" selectedValue={sidebarTab} onTabSelect={(_, data) => setSidebarTab(data.value)}>
+                  <Tab className="sidebar-tab" value="collections">收藏集</Tab>
+                  <Tab className="sidebar-tab" value="servers">MCP 服务器</Tab>
+                  <Tab className="sidebar-tab" value="history">历史记录</Tab>
+                </TabList>
+                {renderSidebarPanelContent(sidebarTab)}
+              </div>
+              <div className="sidebar-bottom-toggle">
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  icon={<PanelLeftContractRegular />}
+                  className="sidebar-toggle-button"
+                  title="折叠侧边栏"
+                  aria-label="折叠侧边栏"
+                  onClick={() => toggleSidebarCollapsed(true)}
+                >
+                  收起侧边栏
+                </Button>
+              </div>
+              <div
+                className="sidebar-resize-handle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整侧边栏宽度"
+                onPointerDown={beginSidebarResize}
+              />
+            </div>
+          ) : (
+            <div className="sidebar-collapsed-shell">
+              <div className="sidebar-logo-badge" title="PostMCP" aria-hidden="true">
+                <img src="/appicon.png" alt="PostMCP" className="workspace-app-icon" />
+              </div>
+
+              <div className="sidebar-collapsed-actions">
+                {sidebarQuickTabs.map((item) => (
+                  <Popover
+                    key={item.value}
+                    open={sidebarFloatingTab === item.value}
+                    onOpenChange={(_, data) => setSidebarFloatingTab(data.open ? item.value : '')}
+                    positioning={{ position: 'after', align: 'start', offset: { crossAxis: -8, mainAxis: 12 } }}
+                  >
+                    <PopoverTrigger disableButtonEnhancement>
+                      <button
+                        className={`sidebar-collapsed-action-btn ${sidebarFloatingTab === item.value ? 'active' : ''}`}
+                        title={item.label}
+                        aria-label={item.label}
+                        aria-pressed={sidebarFloatingTab === item.value}
                         onClick={() => {
-                          handleWorkspaceSwitch(workspace.id)
+                          setSidebarTab(item.value)
+                          setSidebarFloatingTab((current) => (current === item.value ? '' : item.value))
                         }}
                       >
-                        <span className="workspace-item-icon"><WrenchRegular /></span>
-                        <div className="workspace-item-content">
-                          <span className="workspace-item-name">{workspace.name}</span>
-                          {workspace.path && <span className="workspace-item-path">{workspace.path}</span>}
-                        </div>
-                        <div className="workspace-item-actions">
-                          {workspace.id === activeWorkspaceId && gitEnabled && (
-                            <>
-                              <button
-                                className={`workspace-item-action-btn ${isWorkspacePushBusy(workspace.id) ? 'updating' : ''}`}
-                                title={isWorkspacePushBusy(workspace.id) ? '正在处理推送…' : '推送'}
-                                disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl || isWorkspacePushBusy(workspace.id)}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  openPushPreview(workspace)
-                                }}
-                              >
-                                {isWorkspacePushBusy(workspace.id) ? (
-                                  <span className="update-icon-wrapper rotating">
-                                    <ArrowClockwiseRegular />
-                                  </span>
-                                ) : (
-                                  <ArrowUpRegular />
-                                )}
-                              </button>
-                              <button
-                                className={`workspace-item-action-btn ${isWorkspaceUpdating(workspace.id) ? 'updating' : ''}`}
-                                title="拉取"
-                                disabled={workspaceOperationState.updatingId !== null || !workspace.gitUrl}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleWorkspaceUpdate(workspace.id)
-                                }}
-                              >
-                                {isWorkspaceUpdating(workspace.id) ? (
-                                  <span className="update-icon-wrapper rotating">
-                                    <ArrowClockwiseRegular />
-                                  </span>
-                                ) : isWorkspaceUpdated(workspace.id) ? (
-                                  <span className="update-icon-success">
-                                    <CheckmarkCircleRegular />
-                                  </span>
-                                ) : (
-                                  <ArrowClockwiseRegular />
-                                )}
-                              </button>
-                            </>
-                          )}
-                          <button
-                            className="workspace-item-action-btn"
-                            title="配置"
-                            disabled={workspaceOperationState.updatingId !== null || workspace.readOnly}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openWorkspaceConfigDialog(workspace)
-                            }}
-                          >
-                            <SettingsRegular />
-                          </button>
-                        </div>
-                        {workspace.id === activeWorkspaceId && <CheckRegular className="workspace-item-check" />}
+                        {item.icon}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverSurface className="sidebar-floating-surface" onMouseLeave={() => setSidebarFloatingTab('')}>
+                      <div className="sidebar-floating-header">
+                        <Body1>{item.label}</Body1>
                       </div>
-                    ))}
-                  {workspaceSlots.filter((ws) => ws.name.toLowerCase().includes(workspaceSearch.toLowerCase())).length === 0 && (
-                    <div className="workspace-dropdown-empty">暂无匹配的工作空间</div>
-                  )}
-                </div>
-              </PopoverSurface>
-            </Popover>
-            </>
-            )}
-          </div>
-        </div>
-
-        <div className="sidebar-content-shell">
-          <TabList className="sidebar-tab-list" selectedValue={sidebarTab} onTabSelect={(_, data) => setSidebarTab(data.value)}>
-            <Tab className="sidebar-tab" value="collections">收藏集</Tab>
-            <Tab className="sidebar-tab" value="servers">MCP 服务器</Tab>
-            <Tab className="sidebar-tab" value="history">历史记录</Tab>
-          </TabList>
-
-          <div className="sidebar-tab-panel">
-            {sidebarTab === 'collections' && (
-              <>
-                <div className="section-toolbar">
-                  <Button size="small" icon={<SaveRegular />} onClick={openSaveCurrentDialog}>
-                    保存当前
-                  </Button>
-                  <Button size="small" onClick={() => addCollectionFolder()}>
-                    新建文件夹
-                  </Button>
-                </div>
-                <div className={`stack-list collection-tree-root ${collectionDragState.targetId === collectionRootValue ? 'root-drop-active' : ''}`} onDragOver={handleCollectionRootDragOver} onDrop={(event) => handleCollectionDrop(event, collectionRootValue, 'root')}>
-                  <CollectionTree
-                    nodes={bootstrap.collections.items}
-                    expandedFolders={expandedFolders}
-                    dragState={collectionDragState}
-                    renamingFolderId={inlineRenameFolder.id}
-                    renamingFolderDraft={inlineRenameFolder.draft}
-                    onContextMenu={handleCollectionContextMenu}
-                    onDragEnd={clearCollectionDragState}
-                    onDragOver={handleCollectionDragOver}
-                    onDragStart={handleCollectionDragStart}
-                    onDrop={handleCollectionDrop}
-                    onOpenRequest={openCollectionRequest}
-                    onRenameFolderCancel={cancelInlineRenameFolder}
-                    onRenameFolderChange={(value) => setInlineRenameFolder((current) => ({ ...current, draft: value }))}
-                    onRenameFolderConfirm={confirmInlineRenameFolder}
-                    onToggleFolder={toggleCollectionFolder}
-                  />
-                </div>
-              </>
-            )}
-
-            {sidebarTab === 'servers' && (
-              <>
-                <div className="section-toolbar">
-                  <Button size="small" icon={<AddRegular />} onClick={() => { setServerDraft(createServerDraft()); setServerDialogOpen(true) }}>
-                    添加
-                  </Button>
-                  <Button size="small" icon={<ArrowDownloadRegular />} onClick={() => { setImportError(''); setImportDialogOpen(true) }}>
-                    导入 JSON
-                  </Button>
-                </div>
-                <div className="stack-list">
-                  {bootstrap.mcpServers.servers.map((server) => {
-                    const status = serverStatuses[server.id] || createServerStatus('unknown')
-
-                    return (
-                      <div className="list-card" key={server.id}>
-                        <div className="list-card-main">
-                          <strong>{server.name || '未命名服务器'}</strong>
-                          <Caption1>{server.transport}</Caption1>
-                        </div>
-                        <div className="list-card-actions">
-                          <Button
-                            size="small"
-                            appearance="subtle"
-                            className={`mcp-server-status-button mcp-server-status-button-${status.state}`}
-                            icon={<PlugConnectedRegular />}
-                            onClick={() => testServer(server.id)}
-                            title={describeServerStatus(status)}
-                          />
-                          <Button size="small" appearance="subtle" icon={<ArrowClockwiseRegular />} onClick={() => discoverServer(server.id)} />
-                          <Button
-                            size="small"
-                            appearance="subtle"
-                            icon={<EditRegular />}
-                            onClick={() => { setServerDraft({ ...server, args: server.args || [], headers: normalizePairs(server.headers), env: normalizePairs(server.env) }); setServerDialogOpen(true) }}
-                            title="编辑"
-                          />
-                          <Button size="small" appearance="subtle" icon={<DeleteRegular />} onClick={() => setServerDeleteTarget(server)} />
-                        </div>
+                      <div className="sidebar-floating-content">
+                        {renderSidebarPanelContent(item.value, { floating: true })}
                       </div>
-                    )
-                  })}
-                  {!bootstrap.mcpServers.servers.length && <EmptyState text="注册一个 MCP 服务器以解锁工具调试、提示检查和资源浏览功能。" />}
-                </div>
-              </>
-            )}
+                    </PopoverSurface>
+                  </Popover>
+                ))}
+              </div>
 
-            {sidebarTab === 'history' && (
-              <>
-                <div className="section-toolbar">
-                  <Button size="small" appearance="secondary" icon={<DeleteRegular />} onClick={() => openHistoryDeleteDialog({ type: 'all' })} disabled={!allHistory.length}>
-                    删除全部
-                  </Button>
-                </div>
-                <div className="stack-list">
-                  {!!groupedHistory.length && (
-                    <Accordion className="history-accordion" collapsible multiple defaultOpenItems={groupedHistory.map((group) => group.dayKey)}>
-                      {groupedHistory.map((group) => (
-                        <AccordionItem key={group.dayKey} value={group.dayKey}>
-                          <AccordionHeader onContextMenu={(event) => handleHistoryContextMenu(event, { type: 'day', dayKey: group.dayKey, label: group.label })}>
-                            <div className="history-day-header">
-                              <span>{group.label}</span>
-                              <Badge appearance="outline">{group.items.length}</Badge>
-                            </div>
-                          </AccordionHeader>
-                          <AccordionPanel>
-                            <div className="history-day-list">
-                              {group.items.map((item) => (
-                                <button
-                                  className="history-row"
-                                  key={item.id}
-                                  onClick={() => replayHistory(item)}
-                                  onContextMenu={(event) => handleHistoryContextMenu(event, { type: 'item', item })}
-                                >
-                                  <HistoryTitle item={item} servers={bootstrap.mcpServers.servers} collections={bootstrap.collections.items} />
-                                </button>
-                              ))}
-                            </div>
-                          </AccordionPanel>
-                        </AccordionItem>
-                      ))}
-                    </Accordion>
-                  )}
-                  {!allHistory.length && <EmptyState text="请求和 MCP 执行历史记录将显示在这里。" />}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </aside>
+              <div className="sidebar-bottom-toggle sidebar-bottom-toggle-collapsed">
+                <button
+                  className="sidebar-collapsed-action-btn sidebar-expand-btn"
+                  title="展开侧边栏"
+                  aria-label="展开侧边栏"
+                  onClick={() => {
+                    toggleSidebarCollapsed(false)
+                  }}
+                >
+                  <PanelLeftExpandRegular />
+                </button>
+              </div>
+            </div>
+          )}
+        </aside>
 
       <main className="workspace-panel">
         <div className="tabs-strip">
@@ -2693,7 +2945,7 @@ function App() {
                       </Field>
 
                       <Field label="请求 URL" className="grow-field">
-                        <Input value={activeTab.http.url} onChange={(_, data) => updateHttpRequest('url', data.value)} onPaste={handleUrlPaste} placeholder="粘贴 URL 或完整的 curl 命令" />
+                        <Input value={activeTab.http.url} onChange={(_, data) => handleHttpURLChange(data.value)} onPaste={handleUrlPaste} placeholder="粘贴 URL 或完整的 curl 命令" />
                       </Field>
                     </div>
 
@@ -2800,13 +3052,28 @@ function App() {
                   <div className="editor-card" style={editorBodyStyle}>
                     <div className="editor-card-inner">
                       {httpEditorTab === 'params' && (
-                        <KeyValueEditor title="查询参数" rows={activeTab.http.query} onChange={(rows) => updateHttpRequest('query', rows)} />
+                        <KeyValueEditor
+                          title="查询参数"
+                          rows={activeTab.http.query}
+                          hiddenRows={autoHttpFields.query}
+                          showHiddenButton
+                          lockHiddenRowSelection
+                          onToggleHiddenRow={toggleHttpAutoField}
+                          onChange={handleHttpQueryChange}
+                        />
                       )}
                       {httpEditorTab === 'headers' && (
-                        <KeyValueEditor title="请求头" rows={activeTab.http.headers} onChange={(rows) => updateHttpRequest('headers', rows)} />
+                        <KeyValueEditor
+                          title="请求头"
+                          rows={activeTab.http.headers}
+                          hiddenRows={autoHttpFields.headers}
+                          showHiddenButton
+                          onToggleHiddenRow={toggleHttpAutoField}
+                          onChange={(rows) => updateHttpRequest('headers', rows)}
+                        />
                       )}
                       {httpEditorTab === 'auth' && (
-                        <HttpAuthEditor auth={activeTab.http.auth} onChange={(path, value) => updateHttpRequest(`auth.${path}`, value)} />
+                        <HttpAuthEditor auth={activeTab.http.auth} onChange={handleHttpAuthChange} />
                       )}
                       {httpEditorTab === 'body' && (
                         <HttpBodyEditor body={activeTab.http.body} onChange={(path, value) => updateHttpRequest(`body.${path}`, value)} editorSettings={settingsForm} />
@@ -2941,7 +3208,9 @@ function App() {
 
       <div className="status-bar">
         <span>{loadError || statusMessage || '就绪'}</span>
-        {busy && <Spinner size="tiny" />}
+        {busy && <Field className="status-bar-process" thickness="large" validationState="none">
+      <ProgressBar />
+    </Field>}
         <Button appearance="subtle" size="small" icon={<SettingsRegular />} onClick={() => setSettingsDialogOpen(true)} title="设置" />
       </div>
 
@@ -4393,6 +4662,7 @@ function HttpAuthEditor({ auth, onChange }) {
     none: '无认证',
     basic: 'Basic 认证',
     bearer: 'Bearer Token',
+    apiKey: 'API Key',
   }
 
   return (
@@ -4403,22 +4673,45 @@ function HttpAuthEditor({ auth, onChange }) {
             <Option value="none">无认证</Option>
             <Option value="basic">Basic 认证</Option>
             <Option value="bearer">Bearer Token</Option>
+            <Option value="apiKey">API Key</Option>
           </Dropdown>
         </Field>
       </aside>
 
       <div className="http-auth-config">
-        {auth.type === 'none' && <Caption1>当前未启用认证。</Caption1>}
+        {auth.type === 'none' && <Caption1><div className="table-empty-state">本次请求将不会使用任何认证</div></Caption1>}
         {auth.type === 'basic' && (
-          <div className="http-auth-fields">
+          <>
+		  <div className="http-auth-fields">
             <Field label="用户名"><Input value={auth.username} onChange={(_, data) => onChange('username', data.value)} /></Field>
+          </div>
+		  <div className="http-auth-fields">
             <Field label="密码"><Input value={auth.password} type="password" onChange={(_, data) => onChange('password', data.value)} /></Field>
           </div>
+		  </>
         )}
         {auth.type === 'bearer' && (
           <div className="http-auth-fields">
             <Field label="Bearer Token"><Input value={auth.token} onChange={(_, data) => onChange('token', data.value)} /></Field>
           </div>
+        )}
+        {auth.type === 'apiKey' && (
+		<>
+          <div className="http-auth-fields">
+            <Field label="键"><Input value={auth.apiKeyKey} onChange={(_, data) => onChange('apiKeyKey', data.value)} /></Field>
+		  </div>
+		  <div className="http-auth-fields">
+            <Field label="值"><Input value={auth.apiKeyValue} onChange={(_, data) => onChange('apiKeyValue', data.value)} /></Field>
+          </div>
+		  <div className="http-auth-fields">
+		    <Field label="添加到">
+              <RadioGroup layout="horizontal" value={auth.apiKeyIn || 'header'} onChange={(_, data) => onChange('apiKeyIn', data.value)}>
+                <Radio value="header" label="Http头" />
+                <Radio value="query" label="请求参数" />
+              </RadioGroup>
+            </Field>
+		  </div>
+		 </>
         )}
       </div>
     </div>
@@ -4543,7 +4836,7 @@ function FormDataBodyTable({ rows, onChange }) {
   return (
     <div className="body-table-shell">
       <div className="editor-section-header">
-        <strong>form-data</strong>
+        <strong>表单数据</strong>
         <Button size="small" onClick={() => updateRows([...safeRows, newFormDataPair()])}>添加行</Button>
       </div>
       <div className="body-table-grid body-table-head">
@@ -4668,8 +4961,12 @@ function BinaryBodyPicker({ fileName, filePath, onSelectFile, onClear, compact =
   const fileInputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const title = fileName || filePath || '拖动文件到这里，或点击选择文件'
+  const fileIcon = resolveFileDisplayIcon(fileName, filePath)
 
   function pickFile() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
     fileInputRef.current?.click()
   }
 
@@ -4700,13 +4997,36 @@ function BinaryBodyPicker({ fileName, filePath, onSelectFile, onClear, compact =
       onDrop={handleDrop}
     >
       <input ref={fileInputRef} type="file" className="binary-file-input-hidden" onChange={handleInputChange} />
-      <strong>{title}</strong>
+      <strong className="binary-picker-title">
+        <span className="binary-picker-file-icon">{fileIcon}</span>
+        <span>{title}</span>
+      </strong>
       <div className="binary-picker-actions">
         <Button onClick={pickFile}>选择文件</Button>
         {(fileName || filePath) && <Button appearance="subtle" onClick={onClear}>清除</Button>}
       </div>
     </div>
   )
+}
+
+function resolveFileDisplayIcon(fileName, filePath) {
+  const source = String(fileName || filePath || '').trim().toLowerCase()
+  const extension = source.includes('.') ? source.slice(source.lastIndexOf('.') + 1) : ''
+
+  const codeExtensions = new Set(['json', 'xml', 'yaml', 'yml', 'txt', 'md', 'csv', 'log', 'js', 'mjs', 'jsx', 'ts', 'tsx', 'html', 'css', 'scss', 'less', 'sh', 'bat', 'ps1', 'go', 'java', 'kt', 'py', 'rb', 'php', 'c', 'h', 'cpp', 'hpp', 'rs', 'sql'])
+  const mediaExtensions = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'mp4', 'mov', 'mkv', 'avi', 'mp3', 'wav', 'ogg', 'flac'])
+  const archiveExtensions = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'apk', 'iso', 'dmg', 'exe', 'dll', 'bin'])
+
+  if (codeExtensions.has(extension)) {
+    return <CodeRegular />
+  }
+  if (mediaExtensions.has(extension)) {
+    return <StickerRegular />
+  }
+  if (archiveExtensions.has(extension)) {
+    return <StorageRegular />
+  }
+  return <DocumentRegular />
 }
 
 async function readFilePayload(file) {
@@ -4806,7 +5126,7 @@ function ResponsePanelHTTP({ response, editorSettings, onOpenResolvedURL }) {
         </TabList>
 
         <div className="response-metrics">
-          <Badge appearance={response.error ? 'filled' : 'tint'}>{response.error ? '错误' : response.statusCode}</Badge>
+          <Badge className={`response-metrics-badge ${response.error ? 'is-error' : 'is-ok'}`} appearance={response.error ? 'filled' : 'tint'}>{response.error ? '错误' : response.statusCode}</Badge>
           <span>{response.durationMs} ms</span>
           <span>{response.sizeBytes} 字节</span>
           <span>{response.contentType || '未知内容类型'}</span>
@@ -5364,7 +5684,7 @@ function ResponsePanelMCP({ response, editorSettings }) {
       <div className="response-head response-head-mcp">
         <div className="response-panel-title">MCP服务响应</div>
         <div className="response-metrics">
-          <Badge appearance={response.isError ? 'filled' : 'tint'}>{response.isError ? '错误' : '成功'}</Badge>
+          <Badge className={`response-metrics-badge ${response.isError ? 'is-error' : 'is-ok'}`} appearance={response.isError ? 'filled' : 'tint'}>{response.isError ? '错误' : '成功'}</Badge>
           <span>{response.durationMs} ms</span>
           <span>{response.toolName}</span>
         </div>
@@ -5746,6 +6066,8 @@ function normalizeTab(tab) {
       ...(tab?.http || {}),
       query: normalizePairs(tab?.http?.query),
       headers: normalizePairs(tab?.http?.headers),
+      auth: normalizeHttpAuth(tab?.http?.auth, fallback.http.auth),
+      disabledAutoFields: normalizeAutoFieldList(tab?.http?.disabledAutoFields).filter((item) => !String(item).startsWith('query:')),
       cookieScopes: normalizeCookieScopes(tab?.http?.cookieScopes),
       body: normalizeHttpBody(tab?.http?.body, fallback.http.body),
     },
@@ -5754,6 +6076,22 @@ function normalizeTab(tab) {
       ...(tab?.mcp || {}),
     },
   }
+}
+
+function normalizeHttpAuth(auth, fallbackAuth = {}) {
+  const merged = {
+    ...fallbackAuth,
+    ...(auth || {}),
+  }
+  return {
+    ...merged,
+    type: ['none', 'basic', 'bearer', 'apiKey'].includes(merged.type) ? merged.type : 'none',
+    apiKeyIn: merged.apiKeyIn === 'query' ? 'query' : 'header',
+  }
+}
+
+function normalizeAutoFieldList(items = []) {
+  return [...new Set((items || []).map((item) => normalizeAutoFieldKey(item)).filter(Boolean))]
 }
 
 function normalizeCookieScopes(scopes = []) {
@@ -5874,6 +6212,157 @@ function rawTypeToContentType(rawType) {
     case 'text':
     default:
       return 'text/plain'
+  }
+}
+
+function buildEffectiveHttpRequest(http = {}) {
+  const normalized = {
+    ...http,
+    query: normalizePairs(http.query),
+    headers: normalizePairs(http.headers),
+    disabledAutoFields: normalizeAutoFieldList(http.disabledAutoFields).filter((item) => !String(item).startsWith('query:')),
+  }
+  return normalized
+}
+
+function parseQueryRowsFromURL(urlText = '') {
+  const value = String(urlText || '').trim()
+  if (!value) {
+    return []
+  }
+  try {
+    const parsed = new URL(value)
+    const rows = []
+    parsed.searchParams.forEach((entryValue, key) => {
+      rows.push(newPair(key, entryValue))
+    })
+    return rows
+  } catch {
+    return null
+  }
+}
+
+function syncURLWithQueryRows(currentURL = '', queryRows = [], http = {}) {
+  const value = String(currentURL || '').trim()
+  if (!value) {
+    return currentURL
+  }
+  try {
+    const parsed = new URL(value)
+    const params = new URLSearchParams()
+    const autoQueryRows = (buildHttpAutoFields(http).query || []).filter((item) => item.enabled)
+    autoQueryRows.forEach((row) => {
+      const key = String(row?.key || '').trim()
+      if (!key) {
+        return
+      }
+      params.set(key, String(row?.value || ''))
+    })
+    enabledQueryPairs(queryRows).forEach((row) => {
+      const key = String(row?.key || '').trim()
+      if (!key) {
+        return
+      }
+      params.set(key, String(row?.value || ''))
+    })
+    parsed.search = params.toString()
+    return parsed.toString()
+  } catch {
+    return currentURL
+  }
+}
+
+function enabledQueryPairs(rows = []) {
+  return normalizePairs(rows).filter((row) => row.enabled !== false && String(row.key || '').trim())
+}
+
+function filterOutAutoQueryRows(rows = [], http = {}) {
+  const autoQueryRows = (buildHttpAutoFields(http).query || []).filter((item) => item.enabled)
+  if (!autoQueryRows.length) {
+    return rows
+  }
+  return rows.filter((row) => !autoQueryRows.some((autoRow) => (
+    normalizeAutoFieldKey(row?.key) === normalizeAutoFieldKey(autoRow?.key)
+      && String(row?.value || '') === String(autoRow?.value || '')
+  )))
+}
+
+function buildHttpAutoFields(http = {}) {
+  const disabled = new Set(normalizeAutoFieldList(http?.disabledAutoFields))
+  const auth = http?.auth || {}
+  const rows = {
+    headers: [],
+    query: [],
+  }
+
+  const normalizedAuthType = String(auth.type || 'none')
+  if (normalizedAuthType === 'basic') {
+    const username = String(auth.username || '').trim()
+    const password = String(auth.password || '')
+    if (username && password) {
+      const value = `Basic ${safeBase64(`${auth.username || ''}:${auth.password || ''}`)}`
+      rows.headers.push(createHiddenPair('Authorization', value, 'header:authorization', disabled, { forceEnabled: true, locked: true }))
+    }
+  }
+
+  if (normalizedAuthType === 'bearer') {
+    const token = String(auth.token || '').trim()
+    if (token) {
+      rows.headers.push(createHiddenPair('Authorization', `Bearer ${token}`, 'header:authorization', disabled, { forceEnabled: true, locked: true }))
+    }
+  }
+
+  if (normalizedAuthType === 'apiKey') {
+    const key = String(auth.apiKeyKey || '').trim()
+    const value = String(auth.apiKeyValue || '').trim()
+    if (key && value) {
+      const autoFieldKey = normalizeAutoFieldKey(key)
+      const target = auth.apiKeyIn === 'query' ? 'query' : 'header'
+      const id = `${target}:${autoFieldKey}`
+      if (target === 'query') {
+        rows.query.push(createHiddenPair(key, value, id, disabled, { forceEnabled: true, locked: true }))
+      } else {
+        rows.headers.push(createHiddenPair(key, value, id, disabled, { forceEnabled: true, locked: true }))
+      }
+    }
+  }
+
+  const bodyMode = http?.body?.mode || 'none'
+  if (bodyMode !== 'none' && bodyMode !== '') {
+    const rawType = normalizeRawType(http?.body?.rawType)
+    const contentTypeValue = normalizeBodyContentType(bodyMode, rawType, http?.body?.contentType)
+    if (contentTypeValue) {
+      rows.headers.push(createHiddenPair('Content-Type', contentTypeValue, 'header:content-type', disabled))
+    }
+  }
+
+  return rows
+}
+
+function createHiddenPair(key, value, hiddenFieldID, disabledSet, options = {}) {
+  const { forceEnabled = false, locked = false } = options
+  return {
+    ...newPair(key, value),
+    hiddenFieldId: hiddenFieldID,
+    enabled: forceEnabled ? true : !disabledSet.has(normalizeAutoFieldKey(hiddenFieldID)),
+    locked,
+  }
+}
+
+function normalizeAutoFieldKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function safeBase64(value) {
+  try {
+    const bytes = new TextEncoder().encode(String(value || ''))
+    let binary = ''
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte)
+    })
+    return btoa(binary)
+  } catch {
+    return btoa(String(value || ''))
   }
 }
 

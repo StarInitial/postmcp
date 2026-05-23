@@ -16,7 +16,20 @@ function tokenizeCurl(input) {
     }
 
     if (char === '\\') {
-      escaping = true
+      const nextChar = input[index + 1]
+      if (quote) {
+        if (nextChar === quote || nextChar === '\\') {
+          escaping = true
+          continue
+        }
+        current += char
+        continue
+      }
+      if (nextChar === '"' || nextChar === "'" || nextChar === '\\' || /\s/.test(nextChar || '')) {
+        escaping = true
+        continue
+      }
+      current += char
       continue
     }
 
@@ -59,6 +72,62 @@ function parseHeader(headerLine) {
   }
 
   return newPair(headerLine.slice(0, separatorIndex).trim(), headerLine.slice(separatorIndex + 1).trim())
+}
+
+function stripWrappingQuotes(value) {
+  const text = String(value || '').trim()
+  if (!text) {
+    return ''
+  }
+  const first = text[0]
+  const last = text[text.length - 1]
+  if ((first === '"' || first === "'") && last === first) {
+    return text.slice(1, -1)
+  }
+  return text
+}
+
+function fileNameFromPath(filePath) {
+  const normalized = String(filePath || '').trim().replace(/\\/g, '/')
+  if (!normalized) {
+    return ''
+  }
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] || ''
+}
+
+function parseFormEntry(entry, { allowFile = true } = {}) {
+  const separatorIndex = entry.indexOf('=')
+  if (separatorIndex < 0) {
+    return null
+  }
+
+  const key = entry.slice(0, separatorIndex).trim()
+  if (!key) {
+    return null
+  }
+
+  const rawValue = entry.slice(separatorIndex + 1).trim()
+  if (allowFile && rawValue.startsWith('@')) {
+    const filePath = stripWrappingQuotes(rawValue.slice(1))
+    return {
+      key,
+      valueType: 'file',
+      value: '',
+      filePath,
+      fileName: fileNameFromPath(filePath),
+      fileBase64: '',
+    }
+  }
+
+  return {
+    key,
+    valueType: 'text',
+    value: stripWrappingQuotes(rawValue),
+    filePath: '',
+    fileName: '',
+    fileBase64: '',
+  }
 }
 
 function ensureUrl(token) {
@@ -111,6 +180,7 @@ export function tryImportCurl(commandText) {
   const request = createDefaultHttpRequest()
   const headers = []
   const importedCookies = []
+  const formData = []
   let inferredMethod = ''
   let rawBody = ''
 
@@ -154,6 +224,20 @@ export function tryImportCurl(commandText) {
       continue
     }
 
+    if (token === '-F' || token === '--form' || token === '--form-string') {
+      if (next) {
+        const parsedItem = parseFormEntry(next, { allowFile: token !== '--form-string' })
+        if (parsedItem) {
+          formData.push(parsedItem)
+        }
+      }
+      if (!inferredMethod) {
+        inferredMethod = 'POST'
+      }
+      index += 1
+      continue
+    }
+
     if (token === '-u' || token === '--user') {
       const credential = next || ''
       const separatorIndex = credential.indexOf(':')
@@ -183,7 +267,17 @@ export function tryImportCurl(commandText) {
   }
 
   const contentType = headers.find((header) => header.key.toLowerCase() === 'content-type')?.value || ''
-  if (rawBody) {
+  if (formData.length) {
+    request.body.mode = 'form-data'
+    request.body.contentType = 'multipart/form-data'
+    request.body.formData = formData.map((item) => ({
+      ...newPair(item.key, item.value),
+      valueType: item.valueType,
+      fileName: item.fileName,
+      filePath: item.filePath,
+      fileBase64: item.fileBase64,
+    }))
+  } else if (rawBody) {
     if (contentType.includes('application/json')) {
       request.body.mode = 'raw'
       request.body.rawType = 'json'

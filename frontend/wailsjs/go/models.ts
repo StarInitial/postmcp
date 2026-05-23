@@ -737,6 +737,9 @@ export namespace main {
 	    username: string;
 	    password: string;
 	    token: string;
+	    apiKeyKey?: string;
+	    apiKeyValue?: string;
+	    apiKeyIn?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HttpAuth(source);
@@ -748,6 +751,9 @@ export namespace main {
 	        this.username = source["username"];
 	        this.password = source["password"];
 	        this.token = source["token"];
+	        this.apiKeyKey = source["apiKeyKey"];
+	        this.apiKeyValue = source["apiKeyValue"];
+	        this.apiKeyIn = source["apiKeyIn"];
 	    }
 	}
 	export class HttpCookieItem {
@@ -828,6 +834,7 @@ export namespace main {
 	    headers: KeyValuePair[];
 	    cookieScopes: HttpCookieScope[];
 	    auth: HttpAuth;
+	    disabledAutoFields?: string[];
 	    body: HttpBody;
 	    timeoutMs: number;
 	
@@ -844,6 +851,7 @@ export namespace main {
 	        this.headers = this.convertValues(source["headers"], KeyValuePair);
 	        this.cookieScopes = this.convertValues(source["cookieScopes"], HttpCookieScope);
 	        this.auth = this.convertValues(source["auth"], HttpAuth);
+	        this.disabledAutoFields = source["disabledAutoFields"];
 	        this.body = this.convertValues(source["body"], HttpBody);
 	        this.timeoutMs = source["timeoutMs"];
 	    }

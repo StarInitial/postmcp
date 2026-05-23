@@ -33,7 +33,7 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), normalizedTimeout(req.TimeoutMs))
 	defer cancel()
 
-	resolvedURL, err := buildURL(req.URL, req.Query)
+	resolvedURL, err := buildURL(req.URL, req.Query, req.Auth, req.DisabledAutoFields)
 	if err != nil {
 		return nil, err
 	}
@@ -61,10 +61,10 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 		}
 	}
 	applyHTTPCookies(httpReq, resolvedURL, req.CookieScopes)
-	if contentType != "" && httpReq.Header.Get("Content-Type") == "" {
+	if contentType != "" && httpReq.Header.Get("Content-Type") == "" && isAutoFieldEnabled(req.DisabledAutoFields, "header:content-type") {
 		httpReq.Header.Set("Content-Type", contentType)
 	}
-	applyHTTPAuth(httpReq, req.Auth)
+	applyHTTPAuth(httpReq, req.Auth, req.DisabledAutoFields)
 
 	client := buildHTTPClient(settings, normalizedTimeout(req.TimeoutMs))
 	resp, err := client.Do(httpReq)
@@ -124,12 +124,19 @@ func (a *App) ExecuteHTTP(req HttpRequest) (*HttpResponse, error) {
 	return result, nil
 }
 
-func buildURL(rawURL string, query []KeyValuePair) (string, error) {
+func buildURL(rawURL string, query []KeyValuePair, auth HttpAuth, disabledAutoFields []string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		return "", fmt.Errorf("parse url: %w", err)
 	}
 	values := parsed.Query()
+	if strings.EqualFold(strings.TrimSpace(auth.Type), "apikey") && strings.EqualFold(strings.TrimSpace(auth.APIKeyIn), "query") {
+		key := strings.TrimSpace(auth.APIKeyKey)
+		value := strings.TrimSpace(auth.APIKeyValue)
+		if key != "" && value != "" && isAutoFieldEnabled(disabledAutoFields, "query:"+normalizeAutoFieldKey(key)) {
+			values.Set(key, value)
+		}
+	}
 	for _, item := range enabledPairs(query) {
 		values.Set(item.Key, item.Value)
 	}
@@ -235,16 +242,56 @@ func enabledFormDataPairs(items []HttpFormDataItem) []HttpFormDataItem {
 	return result
 }
 
-func applyHTTPAuth(req *http.Request, auth HttpAuth) {
-	switch auth.Type {
+func applyHTTPAuth(req *http.Request, auth HttpAuth, disabledAutoFields []string) {
+	switch strings.ToLower(strings.TrimSpace(auth.Type)) {
 	case "basic":
-		creds := base64.StdEncoding.EncodeToString([]byte(auth.Username + ":" + auth.Password))
+		username := strings.TrimSpace(auth.Username)
+		password := strings.TrimSpace(auth.Password)
+		if username == "" || password == "" {
+			return
+		}
+		if !isAutoFieldEnabled(disabledAutoFields, "header:authorization") {
+			return
+		}
+		creds := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 		req.Header.Set("Authorization", "Basic "+creds)
 	case "bearer":
-		if auth.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+auth.Token)
+		token := strings.TrimSpace(auth.Token)
+		if token == "" {
+			return
+		}
+		if !isAutoFieldEnabled(disabledAutoFields, "header:authorization") {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	case "apikey":
+		if !strings.EqualFold(strings.TrimSpace(auth.APIKeyIn), "header") {
+			return
+		}
+		key := strings.TrimSpace(auth.APIKeyKey)
+		value := strings.TrimSpace(auth.APIKeyValue)
+		if key == "" || value == "" || !isAutoFieldEnabled(disabledAutoFields, "header:"+normalizeAutoFieldKey(key)) {
+			return
+		}
+		req.Header.Set(key, value)
+	}
+}
+
+func normalizeAutoFieldKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func isAutoFieldEnabled(disabledAutoFields []string, fieldID string) bool {
+	if fieldID == "" {
+		return true
+	}
+	normalizedID := normalizeAutoFieldKey(fieldID)
+	for _, item := range disabledAutoFields {
+		if normalizeAutoFieldKey(item) == normalizedID {
+			return false
 		}
 	}
+	return true
 }
 
 func applyHTTPCookies(req *http.Request, resolvedURL string, scopes []HttpCookieScope) {

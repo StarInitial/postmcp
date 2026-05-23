@@ -270,15 +270,16 @@ type KeyValuePair struct {
 }
 
 type HttpRequest struct {
-	Name         string            `json:"name"`
-	Method       string            `json:"method"`
-	URL          string            `json:"url"`
-	Query        []KeyValuePair    `json:"query"`
-	Headers      []KeyValuePair    `json:"headers"`
-	CookieScopes []HttpCookieScope `json:"cookieScopes"`
-	Auth         HttpAuth          `json:"auth"`
-	Body         HttpBody          `json:"body"`
-	TimeoutMs    int               `json:"timeoutMs"`
+	Name               string            `json:"name"`
+	Method             string            `json:"method"`
+	URL                string            `json:"url"`
+	Query              []KeyValuePair    `json:"query"`
+	Headers            []KeyValuePair    `json:"headers"`
+	CookieScopes       []HttpCookieScope `json:"cookieScopes"`
+	Auth               HttpAuth          `json:"auth"`
+	DisabledAutoFields []string          `json:"disabledAutoFields,omitempty"`
+	Body               HttpBody          `json:"body"`
+	TimeoutMs          int               `json:"timeoutMs"`
 }
 
 type HttpCookieScope struct {
@@ -295,10 +296,13 @@ type HttpCookieItem struct {
 }
 
 type HttpAuth struct {
-	Type     string `json:"type"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Token    string `json:"token"`
+	Type        string `json:"type"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Token       string `json:"token"`
+	APIKeyKey   string `json:"apiKeyKey,omitempty"`
+	APIKeyValue string `json:"apiKeyValue,omitempty"`
+	APIKeyIn    string `json:"apiKeyIn,omitempty"`
 }
 
 type HttpBody struct {
@@ -487,7 +491,7 @@ func defaultWorkspaceTab() WorkspaceTab {
 			Query:        []KeyValuePair{newKeyValue("", "")},
 			Headers:      []KeyValuePair{newKeyValue("", "")},
 			CookieScopes: []HttpCookieScope{},
-			Auth:         HttpAuth{Type: "none"},
+			Auth:         HttpAuth{Type: "none", APIKeyIn: "header"},
 			Body: HttpBody{
 				Mode:        "none",
 				ContentType: "application/json",

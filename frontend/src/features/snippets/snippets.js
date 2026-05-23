@@ -76,6 +76,41 @@ function buildHttpBody(http) {
   }
 }
 
+function enabledFormDataPairs(items = []) {
+  return (items || []).filter((pair) => pair.enabled && pair.key)
+}
+
+function buildCurlBodyParts(http) {
+  const mode = http?.body?.mode
+  if (mode === 'form-data') {
+    return enabledFormDataPairs(http?.body?.formData || [])
+      .map((pair) => {
+        if (pair?.valueType === 'file') {
+          const filePath = pair.filePath || pair.fileName
+          if (!filePath) {
+            return ''
+          }
+          return `--form ${JSON.stringify(`${pair.key}=@\"${filePath}\"`)}`
+        }
+        return `--form ${JSON.stringify(`${pair.key}=${pair.value || ''}`)}`
+      })
+      .filter(Boolean)
+  }
+
+  if (mode === 'binary') {
+    if (http?.body?.binaryFile) {
+      return [`--data-binary ${JSON.stringify(`@${http.body.binaryFile}`)}`]
+    }
+    if (http?.body?.binaryBase64) {
+      return [`--data-binary ${JSON.stringify(http.body.binaryBase64)}`]
+    }
+    return []
+  }
+
+  const body = buildHttpBody(http)
+  return body ? [`--data ${JSON.stringify(body)}`] : []
+}
+
 export function generateHttpSnippet(http, language = 'curl') {
   const method = (http.method || 'GET').toUpperCase()
   const headers = resolvedHeaders(http)
@@ -102,9 +137,7 @@ export function generateHttpSnippet(http, language = 'curl') {
     default: {
       const parts = [`curl --request ${method}`, JSON.stringify(http.url || '')]
       headers.forEach((header) => parts.push(`--header ${JSON.stringify(`${header.key}: ${header.value}`)}`))
-      if (body) {
-        parts.push(`--data ${JSON.stringify(body)}`)
-      }
+      parts.push(...buildCurlBodyParts(http))
       return parts.join(' \\\n  ')
     }
   }
