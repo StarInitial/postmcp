@@ -362,7 +362,7 @@ jobs:
       - name: Recreate GitHub release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
           RELEASE_NOTES: ${{ needs.prepare.outputs.release_notes }}
@@ -375,9 +375,16 @@ jobs:
             exit 1
           fi
 
-          gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" || true
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY"
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}"
+          fi
+
           gh release create "$RELEASE_TAG" "${files[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes "$RELEASE_NOTES"
