@@ -18,6 +18,7 @@ env:
   APP_NAME: post-mcp
   PRODUCT_NAME: PostMCP
   GO_VERSION: '1.25.0'
+  PNPM_VERSION: '9'
   WAILS_VERSION: 'v2.11.0'
   NODE_OPTIONS: '--max-old-space-size=4096'
 
@@ -80,6 +81,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: ${{ env.PNPM_VERSION }}
           run_install: false
 
       - name: Setup Node.js
@@ -141,6 +143,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: ${{ env.PNPM_VERSION }}
           run_install: false
 
       - name: Setup Node.js
@@ -200,6 +203,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: ${{ env.PNPM_VERSION }}
           run_install: false
 
       - name: Setup Node.js
