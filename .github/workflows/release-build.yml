@@ -18,9 +18,16 @@ env:
   APP_NAME: post-mcp
   PRODUCT_NAME: PostMCP
   GO_VERSION: '1.25.0'
+  NODE_VERSION: '24'
   PNPM_VERSION: '9'
   WAILS_VERSION: 'v2.11.0'
   NODE_OPTIONS: '--max-old-space-size=4096'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  GIT_TERMINAL_PROMPT: '0'
+  GOPROXY: 'https://proxy.golang.org,direct'
+  GOSUMDB: 'sum.golang.org'
+  GOPRIVATE: ''
+  GONOSUMDB: ''
 
 jobs:
   prepare:
@@ -76,7 +83,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -85,14 +92,14 @@ jobs:
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
@@ -110,6 +117,16 @@ jobs:
         shell: pwsh
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Build frontend
+        shell: pwsh
+        run: pnpm build
+        working-directory: frontend
+
       - name: Build Windows artifacts
         shell: pwsh
         run: |
@@ -126,7 +143,7 @@ jobs:
           }
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-windows
           path: release-assets/*
@@ -138,7 +155,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -147,14 +164,14 @@ jobs:
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
@@ -166,6 +183,16 @@ jobs:
       - name: Install Wails CLI
         shell: bash
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      - name: Install frontend dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Build frontend
+        shell: bash
+        run: pnpm build
+        working-directory: frontend
 
       - name: Build macOS app bundle
         shell: bash
@@ -180,7 +207,7 @@ jobs:
           hdiutil create -volname "${PRODUCT_NAME}" -srcfolder release-assets/dmg-src -ov -format UDZO "release-assets/${APP_NAME}-macos-universal.dmg"
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-macos
           path: release-assets/*.dmg
@@ -192,7 +219,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux build dependencies
         shell: bash
@@ -207,14 +234,14 @@ jobs:
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
@@ -228,6 +255,16 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Install frontend dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Build frontend
+        shell: bash
+        run: pnpm build
+        working-directory: frontend
 
       - name: Build Linux binary
         shell: bash
@@ -285,7 +322,7 @@ jobs:
           nfpm package --packager rpm --config release-assets/nfpm.yaml --target "release-assets/${APP_NAME}-linux-amd64.rpm"
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-linux
           path: |
@@ -305,7 +342,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: release-*
           path: release-assets
