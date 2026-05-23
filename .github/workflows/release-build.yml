@@ -145,7 +145,7 @@ jobs:
             exit 1
           }
 
-          Copy-Item $binary.FullName "release-assets/${{ env.APP_NAME }}-windows-amd64$($binary.Extension)"
+          Copy-Item $binary.FullName "release-assets/${{ env.APP_NAME }}-windows-amd64.exe"
 
           $installer = Get-ChildItem -Path build/bin -Filter "*-installer.exe" | Select-Object -First 1
           if ($installer) {
